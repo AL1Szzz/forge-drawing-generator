@@ -1,0 +1,15 @@
+{
+  "name": "XX单位（默认，与 2026-11-03 定稿口径一致）",
+  "re_draw": "[Ff]\\s*[0-9B][0-9AB][AB8]\\s*\\d{4}",
+  "re_draw_ocr": "[Ff]\\d{2}[B8]\\d{4}",
+  "re_draw_anchor": "(F\\d{2}[AB]\\d{4})",
+  "re_draw_qty": "\\bF\\d{2}[A-Z]\\d{3,5}\\b",
+  "re_range": "([FG]\\d{2}[AB])(\\d{4})[~-](\\d{4})",
+  "re_pdf_name": "[FG]\\d{2}[AB]\\d{4}",
+  "re_lu": "2[3-6]\\d{4}",
+  "re_lu_qty": "\\b(2[3-6]\\d{5})\\b",
+  "re_lu7": "2[0-9]{7}",
+  "materials": "(SA508[ -]?Gr[.\\s]*3|42CrMo|20MnMo|45#|SA105|SA350|Q345R|16Mn)",
+  "cn_font": "C:/Windows/Fonts/simsun.ttc",
+  "en_font": "C:/Windows/Fonts/arial.ttf"
+}

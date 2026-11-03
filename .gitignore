@@ -1,0 +1,41 @@
+# 实际输入输出数据一律不入库（本仓库只放运行过程）
+一重/
+_自检/
+_锻件图/
+_旧汇总/
+_旧稿_*/
+_github/
+工作数据/
+*.pdf
+*.exb
+*.dxf
+*.xls
+*.xlsx
+*.png
+*.jpg
+*.log
+*.bin
+
+# 批次级输入/产物 CSV 与清单
+manifest.csv
+ht_dims.csv
+料单提取.csv
+样件尺寸.csv
+块件尺寸.csv
+合锻表.csv
+规格定稿.csv
+待填_成品尺寸.csv
+数量表.csv
+生成清单.csv
+复核清单.md
+
+# 调试产物
+work/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# 本机专用配置（示例文件用 unit_profile.example.json）
+unit_profile.json
+FORGE_PYTHON.local
