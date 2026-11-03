@@ -158,10 +158,11 @@ def build(batch_dir, dry=False):
     out_dir = os.path.join(batch_dir, "_锻件图")
     os.makedirs(out_dir, exist_ok=True)
     # 出图前把上一轮的 pdf/json 归档到 _旧稿_xx, 免得旧图混进合并件
+    # (dry-run 只看不写, 不归档 —— 2026-11-03 实测发现 dry-run 也会搬走旧 PDF)
     import time, shutil
     _old = [f for f in os.listdir(out_dir)
             if (f.endswith(".pdf") or f.endswith(".json")) and not f.startswith("_")]
-    if _old:
+    if _old and not dry:
         bak = os.path.join(out_dir, "_旧稿_" + time.strftime("%m%d%H%M"))
         os.makedirs(bak, exist_ok=True)
         for f in _old:
