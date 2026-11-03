@@ -236,7 +236,7 @@ def build(batch_dir, dry=False):
                 pass
     for r in jobs:
         dh, lu = r["图号"], r["炉号"]
-        # 规格优先取标题栏拆列; 标题栏没有规格行时(如某页只有成品小尺寸),
+        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 昇-2510-02 F25A3393 只有成品小尺寸),
         # 用图纸重量行直给串兜底解析
         spec = parse_spec(r) or parse_spec(r, raw=(r.get("图纸锻件尺寸") or "").strip())
         _m = (r.get("锻重kg") or "").strip()
@@ -543,7 +543,7 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
             _note = "(%s)" % re.sub(r"\s", "", m51.group(1))
         if base["shape"] == "tube":
             part = {"shape": "tube", "fo": base["od"], "fi": base["id"], "L": base["L"],
-                    "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 2.2}
+                    "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 3.2}
             spec_txt = "\u00d8%d\u00d7\u00d8%d\u00d7%s" % (base["od"], base["id"], base["L"])
         elif base["shape"] == "solid" and base["L"] < base["D"] * 0.9:
             # 厚度<直径的实心件 = 圆饼/盘类, 用双视图(俯视圆+侧视矩形), 2026-11-02 昇-2510-01
@@ -572,7 +572,7 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
         fi = base["id"] - int(round(a2))     # 内径加余量 = 变小
         L = base["L"] + (allow or 0)
         part = {"shape": "tube", "fo": fo, "fi": fi, "L": L,
-                "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 2.2}
+                "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 3.2}
         spec_txt = "\u00d8%d\u00d7\u00d8%d\u00d7%s" % (fo, fi, L)
     else:
         D = base["D"] + int(round(a2))
