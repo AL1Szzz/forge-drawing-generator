@@ -94,8 +94,16 @@ def draw_tube(page, cx, cy, avail_w, avail_h, fo, fi, L, ht_do, ht_di, fs=26, cf
     scale = min(sx, sy)
     # 示意图可用 exag>1 把壁厚夸大(仅影响内径线视觉位置, 标注值不变)
     exag = float(cfg_exag or 1.0)
-    wall = (fo - fi) / 2.0 * exag
-    Wo, Wi, H = fo * scale, (fo - 2 * wall) * scale, L * scale
+    # 美观优先(用户 2026-11-03, 适用于一切图形): 扁环形件(如 Ø900/Ø500×200)
+    # 按真实比例高度只剩几 pt, 像一条缝 —— 宽高比超过 AR_MAX 时拉伸高度,
+    # 只影响视觉, 标注值不变; 壁厚过厚时(相对件高)相应回退夸大倍数
+    AR_MAX = 4.5
+    Wo_true, H_true = fo * scale, L * scale
+    H = H_true
+    if Wo_true / max(H_true, 0.01) > AR_MAX:
+        H = min(Wo_true / AR_MAX, avail_h * 0.8)
+    wall = min((fo - fi) / 2.0 * exag * scale, H * 0.55)   # 视觉壁厚不超过件高的 55%
+    Wo, Wi = fo * scale, fo * scale - 2 * wall
     x1, x2 = cx - Wo / 2, cx + Wo / 2
     y1, y2 = cy - H / 2, cy + H / 2
     ib1, ib2 = cx - Wi / 2, cx + Wi / 2
@@ -218,7 +226,7 @@ def draw_solid(page, cx, cy, avail_w, avail_h, D, L, fs=26, xr_extra=None, phi=T
 
 
 def draw_disc(page, cx, cy, avail_w, avail_h, D, L, fs=26):
-    """圆饼/盘类(锻坯为实心圆盘, 如 Ø320×70): 上圆(俯视 ØD) 下矩形(侧视 D×L),
+    """圆饼/盘类(锻坯为实心圆盘, 如 Ø323×68): 上圆(俯视 ØD) 下矩形(侧视 D×L),
     两视图同比例、左右对齐(用户 2026-11-02 第9条要求, 仿方块双视图风格)。"""
     r2 = max(0.16, min(0.55, L / float(D)))       # 侧视图 高/宽
     gap = fs * 1.5
@@ -367,16 +375,28 @@ def build(cfg):
                         fontfile=ffile, fontname=fname)
 
     # 5b) 信息行: 图号/件号/追溯号/材质/炉号 按实测宽度均匀排一行(用户 2026-11-02)
+    #     规格串有空余位置就并到这一行末尾(用户 2026-11-03); 塞不下才保持上方单独一行
     ir = cfg.get("info_row")
+    spec_above = None
     if ir:
         items = [str(s) for s in ir.get("items", []) if str(s or "").strip()]
+        spec = str(ir.get("append_spec") or "").strip()
+        y, fsz = ir.get("y", 683), ir.get("fs", 12.5)
+        x0, x1 = ir.get("x0", 68), ir.get("x1", 556)
+
+        def _tw(s, size):
+            cn = any("一" <= ch <= "鿿" for ch in s) or "～" in s
+            return text_w(s, size, CN_FONT if cn else EN_FONT)
+
+        if spec and spec not in items:
+            gap_min = 14.0
+            used = sum(_tw(s, fsz) for s in items) + _tw(spec, fsz) + gap_min * len(items)
+            if used <= (x1 - x0):
+                items = items + [spec]
+            else:
+                spec_above = spec          # 回退: 画在信息行上方单独一行
         if items:
-            y, fsz = ir.get("y", 683), ir.get("fs", 12.5)
-            x0, x1 = ir.get("x0", 68), ir.get("x1", 556)
-            widths = []
-            for s in items:
-                cn = any("一" <= ch <= "鿿" for ch in s)
-                widths.append(text_w(s, fsz, CN_FONT if cn else EN_FONT))
+            widths = [_tw(s, fsz) for s in items]
             gap = (x1 - x0 - sum(widths)) / max(1, len(items) - 1)
             cx = x0
             for s, wd in zip(items, widths):
@@ -385,6 +405,12 @@ def build(cfg):
                                 fontfile=CN_FONT if cn else EN_FONT,
                                 fontname="cn" if cn else "helv")
                 cx += wd + gap
+        if spec_above is not None:
+            cx = 312 - _tw(spec_above, 13) / 2
+            cn = any("一" <= ch <= "鿿" for ch in spec_above) or "～" in spec_above
+            npg.insert_text(fitz.Point(cx, y - 20), spec_above, fontsize=13,
+                            fontfile=CN_FONT if cn else EN_FONT,
+                            fontname="cn" if cn else "helv")
 
     # 6) 标题栏单元格(版本/填图/复核/批准/序号/名称/材质/数量 + 上方两行)
     for cell in cfg.get("cells", []):

@@ -236,7 +236,7 @@ def build(batch_dir, dry=False):
                 pass
     for r in jobs:
         dh, lu = r["图号"], r["炉号"]
-        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 批X F25A0001 只有成品小尺寸),
+        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 昇-2510-02 F25A3393 只有成品小尺寸),
         # 用图纸重量行直给串兜底解析
         spec = parse_spec(r) or parse_spec(r, raw=(r.get("图纸锻件尺寸") or "").strip())
         _m = (r.get("锻重kg") or "").strip()
@@ -406,7 +406,8 @@ def build(batch_dir, dry=False):
         if note:
             row["问题"] = (row["问题"] + "; " + "; ".join(note)).strip("; ")
         emit(rep["cfg"], dh0, lu_txt, row, rep["prov"], rep["r"])
-        row["规格"] = rep["cfg"]["texts"][0][2]      # 清单显示最终锻件尺寸(不是成品尺寸)
+        # 清单显示最终锻件尺寸(不是成品尺寸); 规格已挪进 info_row.append_spec
+        row["规格"] = rep["cfg"]["info_row"].get("append_spec") or ""
         report.append(row)
 
         # 加样件: 卡片有取样件尺寸且尺寸与本体不同 → 另出一张 "质保号+样"
@@ -421,11 +422,11 @@ def build(batch_dir, dry=False):
             sA, sB, sC = bk["samp"]
             scfg = make_cfg(it["r"], dh0 + "样", it["lu"],
                             {"shape": "block", "od": sA, "id": sB, "L": sC}, 0, out_dir, False)
-            srow.update(规格=scfg["texts"][0][2], 余量档="", 补加mm="10(每向)",
+            srow.update(规格=scfg["info_row"]["append_spec"], 余量档="", 补加mm="10(每向)",
                         稿件类型="正式稿", 置信=it["row"]["置信"],
                         问题="加样件, 尺寸取自卡片取样行+10(请复核)")
             emit(scfg, dh0 + "样", it["lu"], srow, False, it["r"])
-            srow["规格"] = scfg["texts"][0][2]
+            srow["规格"] = scfg["info_row"]["append_spec"]
             report.append(srow)
             _blk_done = True
             break                                # 同一质保号只出一张样图
@@ -476,7 +477,7 @@ def build(batch_dir, dry=False):
                               % (("(%s件)" % _sq) if _sq else ""))
                        + (("; " + scfg["备注"]) if scfg.get("备注") else ""))
             emit(scfg, dh0 + "样", it["lu"], srow, False, r)
-            srow["规格"] = scfg["texts"][0][2]
+            srow["规格"] = scfg["info_row"]["append_spec"]
             report.append(srow)
             break                                # 同一质保号只出一张样图
 
@@ -507,7 +508,7 @@ def build(batch_dir, dry=False):
                        % ("+".join(str(c) for c in cfr["comp"]), cfr["prod"], cfr["D"], cfr["L"])}
         emit(cfg, dh_txt, lu_txt, row, prov, r2,
              out_name="-".join(dhs) + "_" + "-".join(lus))
-        row["规格"] = cfg["texts"][0][2]
+        row["规格"] = cfg["info_row"]["append_spec"]
         report.append(row)
 
     rp = os.path.join(out_dir, "生成清单.csv")
@@ -545,7 +546,7 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
                     "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 2.2}
             spec_txt = "\u00d8%d\u00d7\u00d8%d\u00d7%s" % (base["od"], base["id"], base["L"])
         elif base["shape"] == "solid" and base["L"] < base["D"] * 0.9:
-            # 厚度<直径的实心件 = 圆饼/盘类, 用双视图(俯视圆+侧视矩形), 2026-11-02 批A
+            # 厚度<直径的实心件 = 圆饼/盘类, 用双视图(俯视圆+侧视矩形), 2026-11-02 昇-2510-01
             part = {"shape": "disc", "D": base["D"], "L": base["L"]}
             spec_txt = "\u00d8%d\u00d7%s" % (base["D"], base["L"])
         else:
@@ -689,11 +690,11 @@ def _pack(r, dh, lu, part, spec_txt, out_dir, src):
         "white_boxes": [], "signatures": SIGS,
         "weight": ((r.get("锻重kg") or "") + "kg") if (r.get("锻重kg") or "").strip() else "",
         "weight_x": 505, "weight_y": 822,
-        "texts": [
-            [312, 663, spec_txt, 13, "center"],
-        ],
+        "texts": [],
         "info_row": {"y": 683, "fs": 12.5, "x0": 68, "x1": 556,
-                     "items": [dh, piece, wx, lu]},   # 材质只在标题栏格子里, 此处不重复
+                     "items": [dh, piece, wx, lu],   # 材质只在标题栏格子里, 此处不重复
+                     # 规格串: 信息行放得下就并到行尾(2026-11-03), 放不下画在上方一行
+                     "append_spec": spec_txt},
         "cells": [[1, 2, 0, 1, "A", 13],
                   [1, 2, 4, 5, name, 11],
                   [1, 2, 5, 6, (r.get("材质") or "")[:12], 10],
