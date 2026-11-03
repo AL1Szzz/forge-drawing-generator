@@ -47,5 +47,9 @@ def merge(pdf_dir, out_path, cover_csv=None, title="锻件尺寸图 汇总"):
 
 if __name__ == "__main__":
     d = sys.argv[1]
+    # 传批次根目录时自动下钻到 _锻件图(防止把根目录的产品图纸 PDF 误合并, 2026-11-03 实测踩坑)
+    fig = os.path.join(d, "_锻件图")
+    if os.path.isdir(fig):
+        d = fig
     merge(d, os.path.join(d, "锻件尺寸图_汇总.pdf"),
           cover_csv=os.path.join(d, "生成清单.csv"))
