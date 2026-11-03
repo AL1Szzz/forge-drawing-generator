@@ -29,7 +29,7 @@ RE_INT = re.compile(r"^\d{1,4}$")
 def find_outline(batch_dir):
     """批次目录里的制造大纲 PDF(排除产品图纸本身)"""
     # 排除本工具自己产出的 PDF(汇总/锻件图/旧稿), 否则会把汇总当成制造大纲
-    SKIP = ("汇总", "锻件尺寸图", "_锻件图", "旧稿", "封面")
+    SKIP = ("汇总", "锻件尺寸图", "锻件图", "_锻件图", "旧稿", "封面")   # 项目里常留 锻件图.pdf/_backup, 也是自家产物
     for f in sorted(glob.glob(os.path.join(batch_dir, "*.pdf"))):
         b = os.path.basename(f)
         if b.startswith("_") or any(k in b for k in SKIP):
