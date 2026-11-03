@@ -18,12 +18,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 内置默认 = XX单位口径, 与 2026-11-03 定稿代码逐字一致
 DEFAULT = {
     "name": "XX单位",
-    "re_draw":        r"[Ff]\s*[0-9B][0-9AB][AB8]\s*\d{4}",
-    "re_draw_ocr":    r"[Ff]\d{2}[AB8]\d{4}",
-    "re_draw_anchor": r"(F\d{2}[AB]\d{4})",
-    "re_draw_qty":    r"\bF\d{2}[A-Z]\d{3,5}\b",
-    "re_range":       r"([FG]\d{2}[AB])(\d{4})[~-](\d{4})",
-    "re_pdf_name":    r"[FG]\d{2}[AB]\d{4}",
+    # 月份位: 1~9 月用数字, 10/11/12 月用 A/B/C; OCR 场景额外允许 8(B 的常见误读, 由图号字典纠正)
+    "re_draw":        r"[Ff]\s*[0-9B][0-9AB][1-9ABC]\s*\d{4}",
+    "re_draw_ocr":    r"[Ff]\d{2}[1-9ABC8]\d{4}",
+    "re_draw_anchor": r"(F\d{2}[1-9ABC]\d{4})",
+    "re_draw_qty":    r"\bF\d{2}[0-9A-Z]\d{3,5}\b",
+    "re_range":       r"([FG]\d{2}[1-9ABC])(\d{4})[~-](\d{4})",
+    "re_pdf_name":    r"[FG]\d{2}[1-9ABC]\d{4}",
     "re_lu":          r"2[3-6]\d{4}",
     "re_lu_qty":      r"\b(2[3-6]\d{5})\b",
     "re_lu7":         r"2[0-9]{7}",

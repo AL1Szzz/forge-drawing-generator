@@ -97,16 +97,17 @@ def build(batch_dir, dry=False):
     ht_p = os.path.join(batch_dir, "ht_dims.csv")
     exb_mode = False
     if not os.path.exists(ht_p):
-        # 热处理卡实际存放位置因人而异, 按"正式稿优先"的顺序探测:
-        #   DXF: 批次\DXF\ > 批次\热处理工艺\ > 批次\热处理DXF\
-        #   EXB: 批次\热处理工艺\ > 批次\热处理工艺\exb\ > 批次\EXB\
+        # 热处理卡目录约定(2026-11-03 定):
+        #   转换了 DXF -> DXF 直接放 批次\热处理工艺\, 原 EXB 放 批次\热处理工艺\exb\
+        #   没转换     -> EXB 直接放 批次\热处理工艺\
+        # 兼容旧批次: DXF 也可放 批次\DXF\ 或 批次\热处理DXF\, EXB 也可放 批次\EXB\
         def _has(d, ext):
             return os.path.isdir(d) and glob.glob(os.path.join(d, ext))
-        dxf_dirs = [d for d in (os.path.join(batch_dir, "DXF"),
-                                os.path.join(batch_dir, "热处理工艺"),
+        dxf_dirs = [d for d in (os.path.join(batch_dir, "热处理工艺"),
+                                os.path.join(batch_dir, "DXF"),
                                 os.path.join(batch_dir, "热处理DXF")) if _has(d, "*.dxf")]
-        exb_dirs = [d for d in (os.path.join(batch_dir, "热处理工艺"),
-                                os.path.join(batch_dir, "热处理工艺", "exb"),
+        exb_dirs = [d for d in (os.path.join(batch_dir, "热处理工艺", "exb"),
+                                os.path.join(batch_dir, "热处理工艺"),
                                 os.path.join(batch_dir, "EXB")) if _has(d, "*.exb")]
         if dxf_dirs:
             import read_ht2
@@ -235,7 +236,9 @@ def build(batch_dir, dry=False):
                 pass
     for r in jobs:
         dh, lu = r["图号"], r["炉号"]
-        spec = parse_spec(r)
+        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 批X F25A0001 只有成品小尺寸),
+        # 用图纸重量行直给串兜底解析
+        spec = parse_spec(r) or parse_spec(r, raw=(r.get("图纸锻件尺寸") or "").strip())
         _m = (r.get("锻重kg") or "").strip()
         mass = float(_m) if re.match(r'^[\d.]+$', _m) else None
         # 合锻件: 本行无重量 → 用同炉号伙伴件的重量定档(同炉合锻, 档位粗分下不影响结果)
@@ -277,7 +280,7 @@ def build(batch_dir, dry=False):
                 provisional = True
         except ValueError:
             pass
-        # 长方体件: 卡片里是 3 个尺寸(如 110×320×450), 不是圆棒/筒
+        # 长方体件: 卡片里是 3 个尺寸(如 110×326×450), 不是圆棒/筒
         # 尺寸取卡片"热处理尺寸"那列, 锻件图每向 +10(用户 2026-11-02)
         # 注意: pick_for 会把"命中原文"改写成"按成品尺寸匹配", 故块判定要看原始行
         _raw_hit = " ".join(x for x in (h.get("命中原文"), _h0.get("命中原文")) if x)
@@ -587,11 +590,11 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
 RE_PIECE = re.compile(r"(\d{2,3})\s*[-—]?\s*[(（]\s*(\d{2,3})\s*[~～]\s*(\d{2,3})\s*[)）]")
 RE_WX = re.compile(r"WX\s*(\d{8,})")
 NAME_STOP = ("名称", "材质", "数量", "填图", "复核", "批准", "版本", "序号", "炉号",
-             "审签人名", "与序", "低应力", "标记", "合锻", "印章", "锻件尺寸图")
+             "张娟", "钱达", "与序", "低应力", "标记", "合锻", "无锡", "锻件尺寸图")
 
 
 RE_SAMPLE_W = re.compile(r"(\d+(?:\.\d+)?)\s*kg.{0,14}?样\s*(\d+(?:\.\d+)?)\s*kg", re.I | re.S)
-# 长方体: 三个尺寸 110×320×450 (无 Ø), 区别于圆棒 ØD×L
+# 长方体: 三个尺寸 110×326×450 (无 Ø), 区别于圆棒 ØD×L
 RE_BLOCK = re.compile(r"(?<![\d.])(\d{2,4})\s*[×xX*]\s*(\d{2,4})\s*[×xX*]\s*(\d{2,4})(?![\d.])")
 
 
@@ -630,7 +633,7 @@ def scfg_part_txt(cfg):
 
 
 def _trace(r):
-    """从图纸 OCR 原文提取 件号范围 / 追溯号 / 数量(由件号范围推算)。
+    """从图纸 OCR 原文提取 件号范围 / WX追溯号 / 数量(由件号范围推算)。
     提取不到就留空, 绝不猜(2026-11-02 用户指定保留的元素)。"""
     raw = (r.get("原始OCR") or "")
     piece = wx = qty = ""

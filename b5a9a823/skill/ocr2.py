@@ -46,8 +46,8 @@ RE_OD = re.compile(r'[0OØøΦ⌀]?(\d{2,4})\s*[X×x*]\s*(\d{2,6})')
 RE_TUBE = re.compile(r'[0OØøΦ⌀]?(\d{2,4})\s*[/]\s*[0OØøΦ⌀]?(\d{2,4})\s*[X×x*]\s*(\d{2,6})')
 RE_DRAW = rx("re_draw_ocr")
 RE_LU = rx("re_lu")
-# 重量行可能写成 "Ø900/ø350×800×8%=4000kg" —— 前面的尺寸就是**准确的锻件尺寸**
-# 注意两种 OCR 变异(2026-11-03 实测):
+# 重量行可能写成 "Ø941/ø350×838×8%=4261kg" —— 前面的尺寸就是**准确的锻件尺寸**
+# 注意两种 OCR 变异(2026-11-03 批X 实测):
 #   ① Ø 被读成 0 → "05390/04990X198X6%=5377KG", 所以要允许前导 0/O
 #   ② 百分比前的乘号被读成大写 X → "X6%", 所以乘号集合要含 x/X/*
 RE_WT_DIM = re.compile(
@@ -83,12 +83,12 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
             if m and "HCH" not in t:
                 cand = m.group(0).upper()
                 if legal_draws:
-                    g = re.search(r"[AB8](\d{4})", cand)
+                    g = re.search(r"[1-9ABC8](\d{4})", cand)
                     near = [d for d in legal_draws if g and d.endswith(g.group(1))]
                     if len(near) == 1:
                         f["图号"], f["图号conf"] = near[0], c
-                    elif not near and re.fullmatch(r"F\d{2}[AB8]\d{4}", cand):
-                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(文件名可能漏写了尾号):
+                    elif not near and re.fullmatch(r"F\d{2}[1-9ABC8]\d{4}", cand):
+                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 F25A0009 而文件名只写到 3401):
                         # 保留原值但降置信 → 复核清单提示人工确认, 而不是整页静默丢掉
                         f["图号"], f["图号conf"] = cand, min(c, 0.92)
                 else:

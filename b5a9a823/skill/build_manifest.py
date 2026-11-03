@@ -27,21 +27,23 @@ MAT_PAT = pat("materials")
 
 def norm_draw(s):
     """把 OCR 结果规整成图号形式, 再与合法集合比对。
-    月份字母支持 A/B 两个系列(F24B1369 / F25A3395); OCR 常把 B 读成 8, 这里纠正。"""
+    月份位 1~9/A/B/C 共 12 个月; OCR 常把 B 读成 8, 这里给出两种候选(以字典命中为准)。"""
     t = re.sub(r'[^0-9A-Za-z]', '', s).upper()
-    m = re.search(r'F(\d{2})([AB8])(\d{3,4})', t)
+    m = re.search(r'F(\d{2})([1-9ABC8])(\d{3,4})', t)
     if not m:
         return None
-    mon = 'B' if m.group(2) == '8' else m.group(2)
-    return 'F' + m.group(1) + mon + m.group(3)
+    mons = ('B', '8') if m.group(2) == '8' else (m.group(2),)
+    return 'F' + m.group(1) + mons[0] + m.group(3)
 
 
 def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
     drawings = sorted(glob.glob(os.path.join(batch_dir, "*.pdf")))
-    ht_dir = os.path.join(batch_dir, "热处理工艺")
-    # 1) 合法炉号集合 = 热处理报告文件名
-    ht_files = (sorted(glob.glob(os.path.join(ht_dir, "*.exb"))) +
-                sorted(glob.glob(os.path.join(ht_dir, "exb", "*.exb"))))
+    # 1) 合法炉号集合 = 热处理报告文件名(DXF 与 EXB 都算, 目录见 make_batch 约定)
+    ht_files = []
+    for pat in ("热处理工艺/*.dxf", "DXF/*.dxf", "热处理DXF/*.dxf",
+                "热处理工艺/*.exb", "热处理工艺/exb/*.exb", "EXB/*.exb"):
+        ht_files += glob.glob(os.path.join(batch_dir, pat))
+    ht_files.sort()
     ht_map = {}
     for f in ht_files:
         m = RE_LU.search(os.path.basename(f))
@@ -72,22 +74,74 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             p = doc[i]
             R = p.rect
             tmp = "_tb_%d.png" % os.getpid()
-            # 标题栏区
-            p.get_pixmap(dpi=dpi, clip=fitz.Rect(R.width*.06, R.height*.70, R.width*.96, R.height*.97)).save(tmp)
-            blocks = ocr_blocks(tmp)
-            f = parse_fields(blocks, legal_draws=legal_draws, valid_lu=set(ht_map))
-            # 图框下方那一行: 可能是 "1880kg", 也可能是 "Ø900/ø350×800×8%=4000kg"
-            #                          后者前面的尺寸就是**准确的锻件尺寸**, 直接采用
-            p.get_pixmap(dpi=dpi, clip=fitz.Rect(R.width*.05, R.height*.90, R.width*.98, R.height*1.0)).save(tmp)
-            w_mass, w_dim = parse_weight_line(ocr_blocks(tmp))
-            if os.path.exists(tmp):
-                os.remove(tmp)
-            if not (w_mass and w_dim):
-                # 重量行有时落在标题栏区(0.70~0.97)而不是底部 10% 的裁剪里,
-                # 用已经 OCR 过的标题栏 blocks 兜底再抓一次
-                m2, d2 = parse_weight_line(blocks)
-                w_mass = w_mass or m2
-                w_dim = w_dim or d2
+            def _try(rot):
+                old = p.rotation
+                if rot % 360 != old % 360:
+                    p.set_rotation(rot % 360)
+                R2 = p.rect
+                # 标题栏区
+                p.get_pixmap(dpi=dpi, clip=fitz.Rect(R2.width*.06, R2.height*.70, R2.width*.96, R2.height*.97)).save(tmp)
+                b = ocr_blocks(tmp)
+                f_ = parse_fields(b, legal_draws=legal_draws, valid_lu=set(ht_map))
+                # 图框下方那一行: 可能是 "1880kg", 也可能是 "Ø941/ø350×838×8%=4261kg"
+                #                          后者前面的尺寸就是**准确的锻件尺寸**, 直接采用
+                p.get_pixmap(dpi=dpi, clip=fitz.Rect(R2.width*.05, R2.height*.90, R2.width*.98, R2.height*1.0)).save(tmp)
+                wm, wd = parse_weight_line(ocr_blocks(tmp))
+                if not (wm and wd):
+                    # 重量行有时落在标题栏区(0.70~0.97)而不是底部 10% 的裁剪里,
+                    # 用已经 OCR 过的标题栏 blocks 兜底再抓一次(批X 实测: 3 张漏抓)
+                    m2, d2 = parse_weight_line(b)
+                    wm = wm or m2
+                    wd = wd or d2
+                p.set_rotation(old)
+                return b, f_, wm, wd
+            blocks, f, w_mass, w_dim = _try(p.rotation)
+            if not (f["图号"] and f["炉号"]):
+                def _score(f_):
+                    return (1 if f_["图号"] else 0) + (1 if f_["炉号"] else 0)
+                s0 = _score(f)
+                best = (blocks, f, w_mass, w_dim)
+                bs = s0
+                # 兜底1: 页面渲染全白(个别灰度 JPEG MuPDF 解不出, 批X p001):
+                #        直接抽出嵌入的整页扫描图, 用 PIL 按比例裁剪后 OCR
+                try:
+                    from PIL import Image
+                    big = None
+                    for im in p.get_images(full=True):
+                        rects = p.get_image_rects(im[0])
+                        if rects and (big is None or
+                                      rects[0].width * rects[0].height > big[0].width * big[0].height):
+                            big = (rects[0], im[0])
+                    if big is not None:
+                        info = doc.extract_image(big[1])
+                        import io as _io
+                        pim = Image.open(_io.BytesIO(info["image"]))
+                        W, H = pim.size
+                        pim.crop((int(W*.06), int(H*.70), int(W*.96), int(H*.97))).save(tmp)
+                        b2 = ocr_blocks(tmp)
+                        f2 = parse_fields(b2, legal_draws=legal_draws, valid_lu=set(ht_map))
+                        pim.crop((int(W*.05), int(H*.90), int(W*.98), int(H*1.0))).save(tmp)
+                        wm2, wd2 = parse_weight_line(ocr_blocks(tmp))
+                        if not (wm2 and wd2):
+                            m3, d3 = parse_weight_line(b2)
+                            wm2 = wm2 or m3
+                            wd2 = wd2 or d3
+                        if _score(f2) > bs:
+                            best, bs = (b2, f2, wm2, wd2), _score(f2)
+                            print("p%d 页面渲染空白, 已改用嵌入扫描图识别" % (i + 1))
+                except ImportError:
+                    pass
+                # 兜底2: 扫描件内容横放但页面 rotation=0 时 OCR 全空:
+                #        自动转 90/180/270 重试, 取识别效果最好的一档
+                for ang in (90, 180, 270):
+                    if bs == 2:
+                        break
+                    b2, f2, wm2, wd2 = _try(p.rotation + ang)
+                    s = _score(f2)
+                    if s > bs:
+                        best, bs = (b2, f2, wm2, wd2), s
+                        print("p%d 页面内容横放, 已旋转 %d° 识别" % (i + 1, ang))
+                blocks, f, w_mass, w_dim = best
             if w_mass:
                 f["锻重kg"] = w_mass
             f["图纸锻件尺寸"] = w_dim
@@ -100,6 +154,8 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             conf = max(f["图号conf"], 0)
             f["图号置信"] = ("exact" if conf > .95 else "字典纠正" if conf else "未识别")
             rows.append(f)
+            if os.path.exists(tmp):
+                os.remove(tmp)
             print("  p%03d 图号=%-10s 炉号=%-8s 规格=Ø%s×%s 重量=%-6s 材质=%s" % (
                 i + 1, f["图号"] or '?', f["炉号"] or '?', f["外径"] or '?', f["长度"] or '?',
                 f["锻重kg"] or '?', f["材质"] or '?'), flush=True)
