@@ -1,7 +1,7 @@
 {
   "name": "XX单位（默认，与 2026-11-03 定稿口径一致）",
   "re_draw": "[Ff]\\s*[0-9B][0-9AB][AB8]\\s*\\d{4}",
-  "re_draw_ocr": "[Ff]\\d{2}[B8]\\d{4}",
+  "re_draw_ocr": "[Ff]\\d{2}[AB8]\\d{4}",
   "re_draw_anchor": "(F\\d{2}[AB]\\d{4})",
   "re_draw_qty": "\\bF\\d{2}[A-Z]\\d{3,5}\\b",
   "re_range": "([FG]\\d{2}[AB])(\\d{4})[~-](\\d{4})",

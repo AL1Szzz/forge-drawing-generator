@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT = {
     "name": "XX单位",
     "re_draw":        r"[Ff]\s*[0-9B][0-9AB][AB8]\s*\d{4}",
-    "re_draw_ocr":    r"[Ff]\d{2}[B8]\d{4}",
+    "re_draw_ocr":    r"[Ff]\d{2}[AB8]\d{4}",
     "re_draw_anchor": r"(F\d{2}[AB]\d{4})",
     "re_draw_qty":    r"\bF\d{2}[A-Z]\d{3,5}\b",
     "re_range":       r"([FG]\d{2}[AB])(\d{4})[~-](\d{4})",

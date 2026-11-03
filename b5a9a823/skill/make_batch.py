@@ -97,18 +97,33 @@ def build(batch_dir, dry=False):
     ht_p = os.path.join(batch_dir, "ht_dims.csv")
     exb_mode = False
     if not os.path.exists(ht_p):
-        if os.path.isdir(os.path.join(batch_dir, "DXF")):
+        # 热处理卡实际存放位置因人而异, 按"正式稿优先"的顺序探测:
+        #   DXF: 批次\DXF\ > 批次\热处理工艺\ > 批次\热处理DXF\
+        #   EXB: 批次\热处理工艺\ > 批次\热处理工艺\exb\ > 批次\EXB\
+        def _has(d, ext):
+            return os.path.isdir(d) and glob.glob(os.path.join(d, ext))
+        dxf_dirs = [d for d in (os.path.join(batch_dir, "DXF"),
+                                os.path.join(batch_dir, "热处理工艺"),
+                                os.path.join(batch_dir, "热处理DXF")) if _has(d, "*.dxf")]
+        exb_dirs = [d for d in (os.path.join(batch_dir, "热处理工艺"),
+                                os.path.join(batch_dir, "热处理工艺", "exb"),
+                                os.path.join(batch_dir, "EXB")) if _has(d, "*.exb")]
+        if dxf_dirs:
             import read_ht2
-            read_ht2.run(os.path.join(batch_dir, "DXF"), out_csv=ht_p)
+            print("热处理卡: DXF @ %s (%d 份) -> 正式稿" % (
+                os.path.relpath(dxf_dirs[0], batch_dir), len(glob.glob(os.path.join(dxf_dirs[0], "*.dxf")))))
+            read_ht2.run(dxf_dirs[0], out_csv=ht_p)
+        elif exb_dirs:
+            # 没有 DXF: 直接解析 exb (2026-11-02 逆向打通, 结果一律待核)
+            import read_exb
+            print("热处理卡: EXB @ %s (%d 份) -> 待核稿" % (
+                os.path.relpath(exb_dirs[0], batch_dir), len(glob.glob(os.path.join(exb_dirs[0], "*.exb")))))
+            read_exb.run(exb_dirs[0], out_csv=ht_p)
+            exb_mode = True
+            print("!! EXB 直读模式: 热处理尺寸未经 DXF 校验, 凡据此出图者标待核稿; "
+                  "图纸重量行直给件不依赖 EXB, 仍为正式稿")
         else:
-            # 没有 DXF: 直接解析 热处理工艺/*.exb (2026-11-02 逆向打通, 结果一律待核)
-            exb_dir = os.path.join(batch_dir, "热处理工艺")
-            if os.path.isdir(exb_dir) and glob.glob(os.path.join(exb_dir, "*.exb")):
-                import read_exb
-                read_exb.run(exb_dir, out_csv=ht_p)
-                exb_mode = True
-                print("!! EXB 直读模式: 热处理尺寸未经 DXF 校验, 凡据此出图者标待核稿; "
-                      "图纸重量行直给件不依赖 EXB, 仍为正式稿")
+            print("!! 未找到热处理卡(DXF/exb), 本批只能走『图纸重量行直给』或『成品尺寸+余量(待核)』")
     if not os.path.exists(man_p):
         print("缺少 manifest.csv, 先跑 build_manifest.py"); return 1
     man = list(csv.DictReader(open(man_p, encoding="utf-8-sig")))
@@ -493,6 +508,16 @@ def build(batch_dir, dry=False):
         report.append(row)
 
     rp = os.path.join(out_dir, "生成清单.csv")
+    if not report:
+        # 一行都没出来: 必然是 manifest 的 图号/炉号 缺了, 或热处理尺寸没读到。
+        # 写一份带表头的空清单(避免下游读到 0 字节坏文件), 并返回非零码, 防止误判成功。
+        print("!! 0 件可出图, 未生成任何图纸。")
+        print("   ① 看 manifest.csv 的『图号』『炉号』两列是否为空 —— OCR 只出草稿值, 必须人工补;")
+        print("   ② 看热处理卡位置: DXF 放 批次\\DXF\\, exb 放 批次\\热处理工艺\\ (或 \\exb\\ 子目录)。")
+        with open(rp, "w", newline="", encoding="utf-8-sig") as f:
+            csv.writer(f).writerow(["图号", "炉号", "材质", "规格", "锻重kg",
+                                    "余量档", "补加mm", "稿件类型", "置信", "问题"])
+        return 2
     with open(rp, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(report[0].keys()))
         w.writeheader(); w.writerows(report)
@@ -676,4 +701,7 @@ def _pack(r, dh, lu, part, spec_txt, out_dir, src):
 
 if __name__ == "__main__":
     os.environ["BATCH_DIR"] = os.path.abspath(sys.argv[1])
-    build(sys.argv[1], dry="--dry-run" in sys.argv)
+    r = build(sys.argv[1], dry="--dry-run" in sys.argv)
+    # 正常返回 (made, prov_made); 出错返回 int(缺 manifest=1 / 0 件可出图=2)
+    # 以前这里忽略返回值, 退出码永远是 0, 跑批会把"一件没出"当成功继续合并
+    sys.exit(r if isinstance(r, int) else 0)

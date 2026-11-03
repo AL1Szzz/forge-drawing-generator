@@ -47,8 +47,11 @@ RE_TUBE = re.compile(r'[0OØøΦ⌀]?(\d{2,4})\s*[/]\s*[0OØøΦ⌀]?(\d{2,4})\s
 RE_DRAW = rx("re_draw_ocr")
 RE_LU = rx("re_lu")
 # 重量行可能写成 "Ø900/ø350×800×8%=4000kg" —— 前面的尺寸就是**准确的锻件尺寸**
+# 注意两种 OCR 变异(2026-11-03 实测):
+#   ① Ø 被读成 0 → "05390/04990X198X6%=5377KG", 所以要允许前导 0/O
+#   ② 百分比前的乘号被读成大写 X → "X6%", 所以乘号集合要含 x/X/*
 RE_WT_DIM = re.compile(
-    r"([ØøΦ⌀φ]?\s*\d{2,4}\s*(?:[/×xX]\s*[ØøΦ⌀φ]?\s*\d{2,4}){1,3})\s*(?:×\s*\d{1,2}\s*%?)?\s*[=≈]\s*(\d{1,5}(?:\.\d)?)\s*[kK][gG]")
+    r"([0OØøΦ⌀φ]?\s*\d{2,4}\s*(?:[/×xX]\s*[0OØøΦ⌀φ]?\s*\d{2,4}){1,3})\s*(?:[×xX*]\s*\d{1,2}\s*%?)?\s*[=≈]\s*(\d{1,5}(?:\.\d)?)\s*[kK][gG]")
 RE_WT = re.compile(r"(\d{1,5}(?:\.\d+)?)\s*[kK][gG]")
 
 
@@ -84,6 +87,10 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
                     near = [d for d in legal_draws if g and d.endswith(g.group(1))]
                     if len(near) == 1:
                         f["图号"], f["图号conf"] = near[0], c
+                    elif not near and re.fullmatch(r"F\d{2}[AB8]\d{4}", cand):
+                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(文件名可能漏写了尾号):
+                        # 保留原值但降置信 → 复核清单提示人工确认, 而不是整页静默丢掉
+                        f["图号"], f["图号conf"] = cand, min(c, 0.92)
                 else:
                     f["图号"], f["图号conf"] = cand, c
         if not f["炉号"] or (c > f["炉号conf"] and "炉号" not in t):

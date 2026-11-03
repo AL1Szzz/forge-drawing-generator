@@ -26,18 +26,22 @@ MAT_PAT = pat("materials")
 
 
 def norm_draw(s):
-    """把 OCR 结果规整成图号形式, 再与合法集合比对"""
+    """把 OCR 结果规整成图号形式, 再与合法集合比对。
+    月份字母支持 A/B 两个系列(F24B1369 / F25A3395); OCR 常把 B 读成 8, 这里纠正。"""
     t = re.sub(r'[^0-9A-Za-z]', '', s).upper()
-    t = t.replace('8', 'B', 1) if 'B' not in t and '8' in t else t
-    m = re.search(r'F[0-9AB]{2}B?([0-9]{3,4})', t)
-    return ('F' + t[1:4].replace('9', '4') + 'B' + m.group(1)) if m else None
+    m = re.search(r'F(\d{2})([AB8])(\d{3,4})', t)
+    if not m:
+        return None
+    mon = 'B' if m.group(2) == '8' else m.group(2)
+    return 'F' + m.group(1) + mon + m.group(3)
 
 
 def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
     drawings = sorted(glob.glob(os.path.join(batch_dir, "*.pdf")))
     ht_dir = os.path.join(batch_dir, "热处理工艺")
     # 1) 合法炉号集合 = 热处理报告文件名
-    ht_files = sorted(glob.glob(os.path.join(ht_dir, "*.exb")))
+    ht_files = (sorted(glob.glob(os.path.join(ht_dir, "*.exb"))) +
+                sorted(glob.glob(os.path.join(ht_dir, "exb", "*.exb"))))
     ht_map = {}
     for f in ht_files:
         m = RE_LU.search(os.path.basename(f))
@@ -78,6 +82,12 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             w_mass, w_dim = parse_weight_line(ocr_blocks(tmp))
             if os.path.exists(tmp):
                 os.remove(tmp)
+            if not (w_mass and w_dim):
+                # 重量行有时落在标题栏区(0.70~0.97)而不是底部 10% 的裁剪里,
+                # 用已经 OCR 过的标题栏 blocks 兜底再抓一次
+                m2, d2 = parse_weight_line(blocks)
+                w_mass = w_mass or m2
+                w_dim = w_dim or d2
             if w_mass:
                 f["锻重kg"] = w_mass
             f["图纸锻件尺寸"] = w_dim
