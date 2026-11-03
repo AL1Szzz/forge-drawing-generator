@@ -7,6 +7,7 @@
 """
 import os, re, sys, csv, json
 import pymupdf as fitz
+from pdfrender import save_page
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -62,7 +63,7 @@ def extract(pdf, pages=None, dpi=300, skew=0.5, out_csv=None, valid_lu=None):
     tmp = "_ld_%d.png" % os.getpid()
     last = None
     for i in range(n):
-        doc[i].get_pixmap(dpi=dpi).save(tmp)
+        save_page(pdf, i, dpi, tmp)       # MuPDF 白图时自动换 PDFium
         txt, nhit, last = ocr_page(Image.open(tmp).convert("L"), tmp, prefer=last)
         bmeta = last
         if os.path.exists(tmp):

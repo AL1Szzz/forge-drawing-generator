@@ -33,6 +33,8 @@ forge-drawing-generator/
 
 - Windows + **Python 3.11**（默认 `C:\Program Files\Python311\python.exe`，换机器可设环境变量 `FORGE_PYTHON`）
 - 依赖：`pip install pymupdf ezdxf rapidocr-onnxruntime olefile Pillow`
+- 建议再装 `pypdfium2`（约 3MB，无模型）：个别扫描件的灰度 JPEG 会让 MuPDF 整页渲染成白图，
+  装了会自动换 PDFium 重渲染；不装则少这层兜底，不影响正常批次
 - 中文字体 `simsun.ttc` / `arial.ttf`（Windows 自带；路径可在 profile 里改）
 - 可选：CAXA 电子图板（导出 DXF 时用；不导出也能跑，见下）
 - 可选：Tesseract（仅 `ocr.py` 料单辅助脚本用；主流程用 RapidOCR）

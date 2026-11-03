@@ -70,30 +70,62 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             print("跳过非图纸PDF:", bn); continue
         doc = fitz.open(pdf)
         n = doc.page_count if pages_limit is None else min(doc.page_count, pages_limit)
+        # 备用渲染引擎: PDFium(Chrome 同款)。个别扫描件的灰度 JPEG 会让 MuPDF 整页渲染成白图,
+        # 同一页换 PDFium 就能正常出图(2026-11-03 实测)
+        try:
+            import pypdfium2 as _pdfium
+            _pdfium_doc = _pdfium.PdfDocument(pdf)
+        except Exception:
+            _pdfium_doc = None
         for i in range(n):
             p = doc[i]
-            R = p.rect
             tmp = "_tb_%d.png" % os.getpid()
-            def _try(rot):
+
+            def _render(rot, frac, path):
+                """按页面比例渲染一块区域; MuPDF 出白图时自动换 PDFium 重渲染"""
                 old = p.rotation
                 if rot % 360 != old % 360:
                     p.set_rotation(rot % 360)
-                R2 = p.rect
+                try:
+                    R2 = p.rect
+                    clip = fitz.Rect(R2.width * frac[0], R2.height * frac[1],
+                                     R2.width * frac[2], R2.height * frac[3])
+                    pix = p.get_pixmap(dpi=dpi, clip=clip)
+                    if pix.samples.count(255) != len(pix.samples):   # 不是全白
+                        pix.save(path)
+                        return True
+                finally:
+                    p.set_rotation(old)
+                if _pdfium_doc is None:
+                    return False
+                try:
+                    pg = _pdfium_doc[i]
+                    pg.set_rotation(rot % 360)
+                    img = pg.render(scale=dpi / 72.0).to_pil()
+                    W, H = img.size
+                    img.crop((int(W * frac[0]), int(H * frac[1]),
+                              int(W * frac[2]), int(H * frac[3]))).save(path)
+                    return True
+                except Exception:
+                    return False
+
+            def _try(rot):
+                b = []
                 # 标题栏区
-                p.get_pixmap(dpi=dpi, clip=fitz.Rect(R2.width*.06, R2.height*.70, R2.width*.96, R2.height*.97)).save(tmp)
-                b = ocr_blocks(tmp)
+                if _render(rot, (0.06, 0.70, 0.96, 0.97), tmp):
+                    b = ocr_blocks(tmp)
                 f_ = parse_fields(b, legal_draws=legal_draws, valid_lu=set(ht_map))
                 # 图框下方那一行: 可能是 "1880kg", 也可能是 "Ø941/ø350×838×8%=4261kg"
                 #                          后者前面的尺寸就是**准确的锻件尺寸**, 直接采用
-                p.get_pixmap(dpi=dpi, clip=fitz.Rect(R2.width*.05, R2.height*.90, R2.width*.98, R2.height*1.0)).save(tmp)
-                wm, wd = parse_weight_line(ocr_blocks(tmp))
+                wm, wd = "", ""
+                if _render(rot, (0.05, 0.90, 0.98, 1.0), tmp):
+                    wm, wd = parse_weight_line(ocr_blocks(tmp))
                 if not (wm and wd):
                     # 重量行有时落在标题栏区(0.70~0.97)而不是底部 10% 的裁剪里,
-                    # 用已经 OCR 过的标题栏 blocks 兜底再抓一次(批X 实测: 3 张漏抓)
+                    # 用已经 OCR 过的标题栏 blocks 兜底再抓一次(某批实测: 3 张漏抓)
                     m2, d2 = parse_weight_line(b)
                     wm = wm or m2
                     wd = wd or d2
-                p.set_rotation(old)
                 return b, f_, wm, wd
             blocks, f, w_mass, w_dim = _try(p.rotation)
             if not (f["图号"] and f["炉号"]):

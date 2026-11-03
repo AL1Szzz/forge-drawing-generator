@@ -4,8 +4,8 @@
 
 为什么走制造大纲而不是 SAP 料单:
   - SAP 料单(网络盘 Excel)的"数量"是**棒材根数**(1~2), 与图纸件数不是一个口径。
-  - 制造大纲(<批次目录>\XX-XXXX-XX XX单位 *.pdf)的"数量"列是**件数**
-    (实测 F24B0010/300001 = 3, 与图纸件号 003-(001~003) 一致)。用户 2026-11-02 指定用这个。
+  - 制造大纲(<批次目录>\批X-XXXX-XX XX单位大连 *.pdf)的"数量"列是**件数**
+    (实测 F24B1369/300010 = 3, 与图纸件号 003-(001~003) 一致)。用户 2026-11-02 指定用这个。
 
 做法: 逐页 RapidOCR → 找表头"数量"列(取"批次"列左侧最近的那个"数量") →
       按 y 分行, 行内取 质保号(F24Bxxxx) / 批次(6位炉号) / 数量(该列最近整数)。
@@ -17,6 +17,7 @@ import os, re, sys, csv, glob
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import pymupdf as fitz
+from pdfrender import save_page
 from ocr2 import ocr_blocks
 from config import rx, pat
 
@@ -27,9 +28,13 @@ RE_INT = re.compile(r"^\d{1,4}$")
 
 def find_outline(batch_dir):
     """批次目录里的制造大纲 PDF(排除产品图纸本身)"""
+    # 排除本工具自己产出的 PDF(汇总/锻件图/旧稿), 否则会把汇总当成制造大纲
+    SKIP = ("汇总", "锻件尺寸图", "_锻件图", "旧稿", "封面")
     for f in sorted(glob.glob(os.path.join(batch_dir, "*.pdf"))):
         b = os.path.basename(f)
-        if b.startswith("_") or "~" in b and re.search(pat("re_pdf_name"), b):
+        if b.startswith("_") or any(k in b for k in SKIP):
+            continue
+        if "~" in b and re.search(pat("re_pdf_name"), b):
             continue
         if re.search(pat("re_pdf_name"), b):             # 产品图纸(图号范围命名)
             continue
@@ -37,10 +42,12 @@ def find_outline(batch_dir):
     return None
 
 
-def ocr_page(pdf, i, dpi=200, tmpdir=None):
-    pg = pdf[i]
+def ocr_page(pdf, i, dpi=200, tmpdir=None, pdf_path=None):
     p = os.path.join(tmpdir or ".", "_qty_p%02d.png" % i)
-    pg.get_pixmap(dpi=dpi).save(p)
+    if pdf_path:
+        save_page(pdf_path, i, dpi, p)     # MuPDF 白图时自动换 PDFium
+    else:
+        pdf[i].get_pixmap(dpi=dpi).save(p)
     return p, ocr_blocks(p, min_conf=0.5)
 
 
@@ -104,7 +111,7 @@ def run(batch_dir, pdf_path=None, out_csv=None):
     print("制造大纲:", os.path.basename(pdf_path), pdf.page_count, "页")
     rows = []
     for i in range(pdf.page_count):
-        img, bl = ocr_page(pdf, i, tmpdir=tmp)
+        img, bl = ocr_page(pdf, i, tmpdir=tmp, pdf_path=pdf_path)
         r = parse_page(bl)
         print("  p%-2d 块%3d 行%2d" % (i + 1, len(bl), len(r)))
         rows.extend(r)
