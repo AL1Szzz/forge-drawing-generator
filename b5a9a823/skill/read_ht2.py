@@ -9,15 +9,15 @@ import os, re, sys, csv, glob
 
 import ezdxf
 
-from config import rx
+from config import rx, norm_lu
 
-# 炉号: 文件名里 6 位
-RE_LU = rx("re_lu")
+# 炉号: 文件名里 6 位 + 可选子号后缀(批次9-1 / 批次9-CR / 批次10重热, 2026-11-05)
+RE_LU = rx("re_lu_suf")
 
 # 判读规则(关键): 只有带 Ø 标记的数才是直径, 否则是表格序号列
 #   Ø911×Ø430×390        → 筒体 外径911 内径430 长390
 #   Ø85×990 / Ø95×1000   → 两根实心棒, 取第一根
-#   64×210×250           → 序号64, 实心棒 Ø210×250
+#   64×211×250           → 序号64, 实心棒 Ø211×250
 RE_D = r"[ØøΦ⌀φ]"
 NUM = r"\d{1,5}(?:\.\d+)?"
 RE_TUBE_M = re.compile(
@@ -87,7 +87,7 @@ def _n(x):
 def extract_one(dxf_path):
     ts = texts(dxf_path)
     lu = RE_LU.search(os.path.basename(dxf_path))
-    r = {"炉号": lu.group(0) if lu else "", "来源": os.path.basename(dxf_path),
+    r = {"炉号": norm_lu(lu.group(0)) if lu else "", "来源": os.path.basename(dxf_path),
          "外径": "", "内径": "", "长度": "", "实心": "", "规格候选": "",
          "含取样": "", "命中原文": "", "全部候选": "", "多行": ""}
     cands = []
@@ -111,7 +111,7 @@ def extract_one(dxf_path):
         if ms:
             cands.append((txt, "solid", _n(ms.group(2)), "", _n(ms.group(3))))
             continue
-        ml = RE_LEADIDX.search(txt)          # "64×210×250" → 序号+实心棒
+        ml = RE_LEADIDX.search(txt)          # "64×211×250" → 序号+实心棒
         if ml:
             cands.append((txt, "solid", _n(ml.group(2)), "", _n(ml.group(3))))
     # 斜杠右列(热处理尺寸)排前面: 后续一律以热处理尺寸为基准(用户 2026-11-02)

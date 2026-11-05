@@ -5,7 +5,7 @@ RapidOCR 带置信度, 低于阈值的字段一律标"需人工", 不静默采�
 """
 import os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import rx
+from config import rx, norm_lu
 
 _R = None
 
@@ -45,7 +45,7 @@ def ocr(img, lang="chi_sim+eng", psm=6):
 RE_OD = re.compile(r'[0OØøΦ⌀]?(\d{2,4})\s*[X×x*]\s*(\d{2,6})')
 RE_TUBE = re.compile(r'[0OØøΦ⌀]?(\d{2,4})\s*[/]\s*[0OØøΦ⌀]?(\d{2,4})\s*[X×x*]\s*(\d{2,6})')
 RE_DRAW = rx("re_draw_ocr")
-RE_LU = rx("re_lu")
+RE_LU = rx("re_lu_suf")      # 炉号(批次)可带 -1/-CR/重热 子号后缀, 2026-11-05
 # 重量行可能写成 "Ø941/ø350×838×8%=4261kg" —— 前面的尺寸就是**准确的锻件尺寸**
 # 注意两种 OCR 变异(2026-11-03 某批 实测):
 #   ① Ø 被读成 0 → "05390/04990X198X6%=5377KG", 所以要允许前导 0/O
@@ -92,15 +92,19 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
                     if len(near) == 1:
                         f["图号"], f["图号conf"] = near[0] + suf, c
                     elif not near and re.fullmatch(r"F\d{2}[1-9ABC8]\d{4}", base):
-                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 图号E 而文件名只写到 3401):
+                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 图号F 而文件名只写到 3401):
                         # 保留原值但降置信 → 复核清单提示人工确认, 而不是整页静默丢掉
                         f["图号"], f["图号conf"] = base + suf, min(c, 0.92)
                 else:
                     f["图号"], f["图号conf"] = base + suf, c
         if not f["炉号"] or (c > f["炉号conf"] and "炉号" not in t):
             m = RE_LU.search(t)
-            if m and (not valid_lu or m.group(0) in valid_lu):
-                f["炉号"], f["炉号conf"] = m.group(0), c
+            if m:
+                cand_lu = norm_lu(m.group(0))
+                # 带子号后缀的炉号: 卡片若是 批次10-1 而图纸写 批次10, 也认(后面按批次找卡时标待核)
+                if (not valid_lu or cand_lu in valid_lu
+                        or (cand_lu.isdigit() and any(v.startswith(cand_lu + "-") for v in valid_lu))):
+                    f["炉号"], f["炉号conf"] = cand_lu, c
         mm = RE_TUBE.search(t)
         if mm and c >= 0.6:
             f.update(外径=mm.group(1), 内径=mm.group(2), 长度=mm.group(3),

@@ -22,7 +22,7 @@ from collections import defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from config import rx
+from config import rx, norm_lu
 
 TIERS = [(1000, 10), (3000, 15), (float("inf"), 20)]   # (上限kg, 双边补加mm)
 MIN_SOLID_D = 50                                     # 圆棒加余量后直径下限(用户 2026-11-02)
@@ -263,7 +263,12 @@ def build(batch_dir, dry=False):
             if w_up <= 1000:
                 allow, tier = a0, "≤1T"
                 derived_note = "锻重未识别,按锻件尺寸推算上限%.0fkg≤1T,档位待确认" % w_up
-        _h0 = (ht.get(lu) or next((ht[t] for t in lu.split("|") if t in ht), [{}]))[0]
+        _rows, _lu_key, _lu_exact = [], None, True
+        for _cand in str(lu).split("|"):
+            _rows, _lu_key, _lu_exact = ht_get(ht, _cand)
+            if _rows:
+                break
+        _h0 = _rows[0] if _rows else {}
         # 单质保号跨多批次(如 质保号C: 批次2=42件/批次3=70件/批次4=70件):
         # 热处理尺寸取第一个有卡片的批次(各批卡片同规格时一致), 出图标待复核
         try:
@@ -277,6 +282,9 @@ def build(batch_dir, dry=False):
         if mass is None:
             problems.append("锻重未识别")
         provisional = False
+        if _rows and not _lu_exact:
+            problems.append("热处理卡按批次%s近似匹配(图纸炉号%s)" % (_lu_key, lu))
+            provisional = True
         try:
             if spec and float(r.get("规格conf") or 0) < 0.80:
                 problems.append("规格置信低(%.2f)" % float(r.get("规格conf") or 0))
@@ -304,6 +312,7 @@ def build(batch_dir, dry=False):
                "规格": ("Ø%s×%s" % (spec["D"], spec["L"])) if spec and spec["shape"] == "solid"
                else ("Ø%s/Ø%s×%s" % (spec["od"], spec["id"], spec["L"]) if spec else ""),
                "锻重kg": r.get("锻重kg", ""),
+               "件号范围": "",
                "余量档": tier, "补加mm": allow,
                "稿件类型": "待核稿" if provisional else "正式稿",
                "置信": r.get("图号置信", ""),
@@ -380,7 +389,9 @@ def build(batch_dir, dry=False):
             piece = _piece
         fname = out_name or ("%s_%s" % (show_dh, lu_txt))
         cfg["output_pdf"] = os.path.join(out_dir, "%s.pdf" % fname.replace("/", "_"))
-        cfg["info_row"]["items"] = [show_dh, piece, wx, lu_txt]
+        # 信息行只留 图号(WX号)炉号 三要素: 件号范围不上图(用户 2026-11-05)，改记在生成清单
+        cfg["info_row"]["items"] = [show_dh, wx, lu_txt]
+        row["件号范围"] = piece
         # 多个质保号(子号合并)时把拆分列表给 forge_gen, 图上竖排(用户 2026-11-05)
         if "/" in show_dh:
             cfg["info_row"]["dh_lines"] = show_dh.split("/")
@@ -638,21 +649,47 @@ RE_BLOCK = re.compile(r"(?<![\d.])(\d{2,4})\s*[×xX*]\s*(\d{2,4})\s*[×xX*]\s*(\
 
 
 def merge_lu(lus, known=None):
-    """多批次写成一段: 连续(或缺失的中间炉号是本批已知炉号)则用 首～尾, 否则逐个～相连"""
-    v = []
+    """多批次写成一段: 连续(或缺失的中间炉号是本批已知炉号)则用 首～尾, 否则逐个～相连。
+    带子号后缀的炉号(批次9-1/批次10重热)不参与数字连写, 原样列在后面(绝不丢, 2026-11-05)。"""
+    v, suf = [], []
     for x in lus:
-        if str(x).isdigit():
-            v.append(int(x))
-    if not v:
-        return "～".join(str(x) for x in lus)
+        s = norm_lu(x)
+        if s.isdigit():
+            v.append(int(s))
+        elif s:
+            suf.append(s)
     v = sorted(set(v))
-    if len(v) == 1:
-        return str(v[0])
-    known = known or set()
-    miss = [n for n in range(v[0], v[-1] + 1) if n not in set(v)]
-    if not miss or all(str(n) in known for n in miss):
-        return "%d～%d" % (v[0], v[-1])
-    return "～".join(str(x) for x in v)
+    seg = []
+    if v:
+        if len(v) == 1:
+            seg.append(str(v[0]))
+        else:
+            known = known or set()
+            miss = [n for n in range(v[0], v[-1] + 1) if n not in set(v)]
+            if not miss or all(str(n) in known for n in miss):
+                seg.append("%d～%d" % (v[0], v[-1]))
+            else:
+                seg.extend(str(x) for x in v)
+    seg.extend(sorted(set(suf)))
+    if not seg:
+        return "～".join(norm_lu(x) for x in lus)
+    return "～".join(seg)
+
+
+def ht_get(ht, lu):
+    """按炉号取热处理卡行。返回 (rows, 命中键, 是否精确)。
+    图纸写 批次10-1 而卡片只有 批次10, 或反之, 都允许近似命中(出图标待核)。"""
+    lu = norm_lu(lu)
+    if lu in ht:
+        return ht[lu], lu, True
+    m = re.match(r"(\d{6})", lu)
+    base = m.group(1) if m else lu
+    if base != lu and base in ht:
+        return ht[base], base, False
+    var = sorted(k for k in ht if k.startswith(base) and k != base)
+    if var:
+        return ht[var[0]], var[0], False
+    return [], None, False
 
 
 def _num2(x):

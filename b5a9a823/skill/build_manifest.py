@@ -14,11 +14,11 @@ import pymupdf as fitz
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ocr2 import ocr_blocks, parse_fields, parse_weight_line
-from config import rx, pat
+from config import rx, pat, norm_lu
 
 # ---- 字段正则(容忍 OCR 错字) ----
 RE_DRAW = rx("re_draw")
-RE_LU = rx("re_lu")                              # 6 位炉号
+RE_LU = rx("re_lu_suf")                          # 6 位炉号 + 可选子号后缀(-1/-CR/重热)
 RE_LU7 = rx("re_lu7")                            # 长炉号(图纸上另写的)
 RE_SPEC = re.compile(r'[ØøΦ⌀5S]?\s*(\d{2,3})\s*[*×xX]\s*(\d{3,5})(?![\d])')
 RE_MASS = re.compile(r'(\d{1,4}(?:\.\d)?)\s*[kK][gG]\s*$')
@@ -53,7 +53,7 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
     for f in ht_files:
         m = RE_LU.search(os.path.basename(f))
         if m:
-            ht_map.setdefault(m.group(0), []).append(os.path.basename(f))
+            ht_map.setdefault(norm_lu(m.group(0)), []).append(os.path.basename(f))
     print("热处理报告 %d 份, 唯一炉号 %d 个" % (len(ht_files), len(ht_map)))
 
     # 2) 合法图号集合 = 图纸文件名里的"起~止"范围(如 XXX1362~1424)

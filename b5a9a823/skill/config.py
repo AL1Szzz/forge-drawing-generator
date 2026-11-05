@@ -27,7 +27,9 @@ DEFAULT = {
     "re_range":       r"([FG]\d{2}[1-9ABC])(\d{4})[~-](\d{4})",
     "re_pdf_name":    r"[FG]\d{2}[1-9ABC]\d{4}",
     "re_lu":          r"2[3-6]\d{4}",
-    "re_lu_qty":      r"\b(2[3-6]\d{5})\b",
+    # 炉号(批次)带子号后缀: 批次9-1、批次10-CR、批次10重热、批次10二次重热 (2026-11-05)
+    "re_lu_suf":      r"2[3-6]\d{4}(?:\s*[-—]\s*[0-9A-Za-z]{1,3}|二次重热|重热|返修|回火|正火)?",
+    "re_lu_qty":      r"\b(2[3-6]\d{5}(?:-\d{1,2})?)\b",
     "re_lu7":         r"2[0-9]{7}",
     "materials":      r"(SA508[ -]?Gr[.\s]*3|42CrMo|20MnMo|45#|SA105|SA350|Q345R|16Mn)",
     "cn_font":        r"C:/Windows/Fonts/simsun.ttc",
@@ -74,3 +76,11 @@ def rx(key):
 
 def get(key, default=None):
     return P.get(key, default)
+
+
+def norm_lu(s):
+    """炉号(批次)规范化: 去空格, 破折号/长横统一成半角 '-', 大写。
+    批次9 — 1 -> 批次9-1; 批次10二次重热 原样保留。"""
+    t = re.sub(r"\s+", "", str(s or ""))
+    t = t.replace("—", "-").replace("－", "-").replace("_", "-")
+    return t.upper()
