@@ -237,7 +237,7 @@ def build(batch_dir, dry=False):
                 pass
     for r in jobs:
         dh, lu = r["图号"], r["炉号"]
-        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批 质保号E 只有成品小尺寸),
+        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批 质保号F 只有成品小尺寸),
         # 用图纸重量行直给串兜底解析
         spec = parse_spec(r) or parse_spec(r, raw=(r.get("图纸锻件尺寸") or "").strip())
         _m = (r.get("锻重kg") or "").strip()
@@ -264,7 +264,7 @@ def build(batch_dir, dry=False):
                 allow, tier = a0, "≤1T"
                 derived_note = "锻重未识别,按锻件尺寸推算上限%.0fkg≤1T,档位待确认" % w_up
         _h0 = (ht.get(lu) or next((ht[t] for t in lu.split("|") if t in ht), [{}]))[0]
-        # 单质保号跨多批次(如 质保号C: 批次2=N件/批次3=M件/批次4=K件):
+        # 单质保号跨多批次(如 质保号C: 批次2=42件/批次3=70件/批次4=70件):
         # 热处理尺寸取第一个有卡片的批次(各批卡片同规格时一致), 出图标待复核
         try:
             import read_ht2
@@ -381,6 +381,9 @@ def build(batch_dir, dry=False):
         fname = out_name or ("%s_%s" % (show_dh, lu_txt))
         cfg["output_pdf"] = os.path.join(out_dir, "%s.pdf" % fname.replace("/", "_"))
         cfg["info_row"]["items"] = [show_dh, piece, wx, lu_txt]
+        # 多个质保号(子号合并)时把拆分列表给 forge_gen, 图上竖排(用户 2026-11-05)
+        if "/" in show_dh:
+            cfg["info_row"]["dh_lines"] = show_dh.split("/")
         p = os.path.join(out_dir, os.path.basename(cfg["output_pdf"])[:-4] + ".json")
         json.dump(cfg, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         if dry:

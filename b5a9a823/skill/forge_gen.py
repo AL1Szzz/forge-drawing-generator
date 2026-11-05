@@ -6,7 +6,7 @@
 
 用法: python forge_gen.py config.json
 """
-import json, math, os, sys
+import json, math, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pymupdf as fitz
 from PIL import Image, ImageEnhance, ImageFont
@@ -375,42 +375,109 @@ def build(cfg):
                         fontfile=ffile, fontname=fname)
 
     # 5b) 信息行: 图号/件号/追溯号/材质/炉号 按实测宽度均匀排一行(用户 2026-11-02)
-    #     规格串有空余位置就并到这一行末尾(用户 2026-11-03); 塞不下才保持上方单独一行
+    #     多质保号(dh_lines)竖排成多行; 剩余字段/单质保号放不下时也自动折行(用户 2026-11-05)
     ir = cfg.get("info_row")
-    spec_above = None
     if ir:
         items = [str(s) for s in ir.get("items", []) if str(s or "").strip()]
         spec = str(ir.get("append_spec") or "").strip()
         y, fsz = ir.get("y", 683), ir.get("fs", 12.5)
         x0, x1 = ir.get("x0", 68), ir.get("x1", 556)
+        GAP = 14.0
 
         def _tw(s, size):
             cn = any("一" <= ch <= "鿿" for ch in s) or "～" in s
             return text_w(s, size, CN_FONT if cn else EN_FONT)
 
-        if spec and spec not in items:
-            gap_min = 14.0
-            used = sum(_tw(s, fsz) for s in items) + _tw(spec, fsz) + gap_min * len(items)
-            if used <= (x1 - x0):
-                items = items + [spec]
-            else:
-                spec_above = spec          # 回退: 画在信息行上方单独一行
-        if items:
-            widths = [_tw(s, fsz) for s in items]
-            gap = (x1 - x0 - sum(widths)) / max(1, len(items) - 1)
-            cx = x0
-            for s, wd in zip(items, widths):
-                cn = any("一" <= ch <= "鿿" for ch in s) or "～" in s   # ～ 用中文字体, 免得变"-"
-                npg.insert_text(fitz.Point(cx, y), s, fontsize=fsz,
-                                fontfile=CN_FONT if cn else EN_FONT,
-                                fontname="cn" if cn else "helv")
-                cx += wd + gap
-        if spec_above is not None:
-            cx = 312 - _tw(spec_above, 13) / 2
-            cn = any("一" <= ch <= "鿿" for ch in spec_above) or "～" in spec_above
-            npg.insert_text(fitz.Point(cx, y - 20), spec_above, fontsize=13,
+        def _draw(txt, x, yy):
+            cn = any("一" <= ch <= "鿿" for ch in txt) or "～" in txt
+            npg.insert_text(fitz.Point(x, yy), txt, fontsize=fsz,
                             fontfile=CN_FONT if cn else EN_FONT,
                             fontname="cn" if cn else "helv")
+
+        def _wrap(seq):
+            """按宽度把字段贪心折成多行(左对齐); 超 long 的件号串按 + 分段再折"""
+            units = []
+            for s in seq:
+                if "+" in s and _tw(s, fsz) > (x1 - x0) * 0.9:
+                    units.extend(p for p in re.split(r"(?<=\+)", s) if p)
+                else:
+                    units.append(s)
+            lines, cur, curw = [], [], 0.0
+            for s in units:
+                w = _tw(s, fsz)
+                add = w if not cur else w + GAP
+                if cur and curw + add > (x1 - x0):
+                    lines.append(cur)
+                    cur, curw = [s], w
+                else:
+                    cur.append(s)
+                    curw += add
+            if cur:
+                lines.append(cur)
+            return lines
+
+        def _stack(lines):
+            """多行竖排: 最底一行落在 y, 往上按行距排; 行距过高时压缩。
+            lines 每项是 [(文本, x起点), ...]"""
+            n = len(lines)
+            lh = ir.get("line_h", 17.0)
+            y_min = ir.get("y_min", 606)
+            if n > 1 and y - lh * (n - 1) < y_min:
+                lh = max(13.0, (y - y_min) / (n - 1))
+            yy = y - lh * (n - 1)
+            for ln in lines:
+                for s, cx in ln:
+                    _draw(s, cx, yy)
+                yy += lh
+
+        def _split2col(dh):
+            """子号 > 4 个时排两列(每列竖排), 返回 [(文本, x), ...] 行列表"""
+            half = (len(dh) + 1) // 2
+            c1, c2 = dh[:half], dh[half:]
+            x2 = x0 + max(_tw(s, fsz) for s in c1) + 30
+            out = []
+            for i in range(half):
+                row = [(c1[i], x0)]
+                if i < len(c2):
+                    row.append((c2[i], x2))
+                out.append(row)
+            return out
+
+        def _row(ln):
+            """把一行文本转成 (文本, x起点) 列表, 逐项累计 x"""
+            out, cx = [], x0
+            for s in ln:
+                out.append((s, cx))
+                cx += _tw(s, fsz) + GAP
+            return out
+
+        dh_lines = [str(s).strip() for s in ir.get("dh_lines", []) if str(s or "").strip()]
+        if dh_lines:
+            # 质保号每号一行竖排(参照原图纸样式, >4 个排两列); 剩余字段+规格折行排在其下
+            rest = items[1:]
+            if spec and spec not in rest:
+                rest = rest + [spec]
+            block = _split2col(dh_lines) if len(dh_lines) > 4 else [[(d, x0)] for d in dh_lines]
+            _stack(block + [_row(ln) for ln in _wrap(rest)])
+        else:
+            fits_spec = (spec and spec not in items
+                         and sum(_tw(s, fsz) for s in items) + _tw(spec, fsz)
+                         + GAP * len(items) <= (x1 - x0))
+            one_line = items + ([spec] if fits_spec else [])
+            used = sum(_tw(s, fsz) for s in one_line) + GAP * (len(one_line) - 1)
+            if len(one_line) > 1 and used > (x1 - x0):
+                # 单行放不下(会互相压字) → 折行竖排, 不再硬塞一行
+                _stack([_row(ln) for ln in _wrap(one_line)])
+            elif one_line:
+                widths = [_tw(s, fsz) for s in one_line]
+                gap = (x1 - x0 - sum(widths)) / max(1, len(one_line) - 1)
+                cx = x0
+                for s, wd in zip(one_line, widths):
+                    _draw(s, cx, y)
+                    cx += wd + gap
+            if spec and not fits_spec and spec not in items:
+                cx = 312 - _tw(spec, 13) / 2
+                _draw(spec, cx, y - 20)
 
     # 6) 标题栏单元格(版本/填图/复核/批准/序号/名称/材质/数量 + 上方两行)
     for cell in cfg.get("cells", []):
