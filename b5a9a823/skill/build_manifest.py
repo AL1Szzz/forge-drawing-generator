@@ -9,7 +9,7 @@
 
 输出: manifest.csv
 """
-import os, re, sys, csv, json, glob
+import os, re, sys, csv, json, glob, tempfile
 import pymupdf as fitz
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,13 +27,18 @@ MAT_PAT = pat("materials")
 
 def norm_draw(s):
     """把 OCR 结果规整成图号形式, 再与合法集合比对。
-    月份位 1~9/A/B/C 共 12 个月; OCR 常把 B 读成 8, 这里给出两种候选(以字典命中为准)。"""
+    月份位 1~9/A/B/C 共 12 个月; OCR 常把 B 读成 8, 这里给出两种候选(以字典命中为准)。
+    质保号子号后缀(-1/-2/-3)原样保留(2026-11-05)。"""
+    ms = re.search(r'[-—–](\d{1,2})\s*$', s)
+    suf = ms.group(0) if ms else ""
+    if ms:
+        s = s[:ms.start()]
     t = re.sub(r'[^0-9A-Za-z]', '', s).upper()
     m = re.search(r'F(\d{2})([1-9ABC8])(\d{3,4})', t)
     if not m:
         return None
     mons = ('B', '8') if m.group(2) == '8' else (m.group(2),)
-    return 'F' + m.group(1) + mons[0] + m.group(3)
+    return 'F' + m.group(1) + mons[0] + m.group(3) + suf
 
 
 def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
@@ -79,7 +84,9 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             _pdfium_doc = None
         for i in range(n):
             p = doc[i]
-            tmp = "_tb_%d.png" % os.getpid()
+            # 临时 PNG 放系统 temp 且固定名复用(每页覆盖), 不逐页删除 ——
+            # 上百页的逐页 os.remove 会触发批量删除安全确认, 中断跑批(2026-11-05 实测)
+            tmp = os.path.join(tempfile.gettempdir(), "_forge_tb_%d.png" % os.getpid())
 
             def _render(rot, frac, path):
                 """按页面比例渲染一块区域; MuPDF 出白图时自动换 PDFium 重渲染"""
@@ -134,7 +141,7 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
                 s0 = _score(f)
                 best = (blocks, f, w_mass, w_dim)
                 bs = s0
-                # 兜底1: 页面渲染全白(个别灰度 JPEG MuPDF 解不出, 批X p001):
+                # 兜底1: 页面渲染全白(个别灰度 JPEG MuPDF 解不出, 某批 p001):
                 #        直接抽出嵌入的整页扫描图, 用 PIL 按比例裁剪后 OCR
                 try:
                     from PIL import Image
@@ -186,8 +193,6 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             conf = max(f["图号conf"], 0)
             f["图号置信"] = ("exact" if conf > .95 else "字典纠正" if conf else "未识别")
             rows.append(f)
-            if os.path.exists(tmp):
-                os.remove(tmp)
             print("  p%03d 图号=%-10s 炉号=%-8s 规格=Ø%s×%s 重量=%-6s 材质=%s" % (
                 i + 1, f["图号"] or '?', f["炉号"] or '?', f["外径"] or '?', f["长度"] or '?',
                 f["锻重kg"] or '?', f["材质"] or '?'), flush=True)

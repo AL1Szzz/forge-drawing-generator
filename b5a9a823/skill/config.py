@@ -5,7 +5,7 @@
   1) 环境变量 FORGE_PROFILE 指向的 json (run_batch.py 会自动把批次目录的设成它)
   2) 命令行参数里那个批次目录中的 unit_profile.json
   3) skill/profiles/default.json
-  4) 内置 DEFAULT (XX单位口径, 保证已有批次行为完全不变)
+  4) 内置 DEFAULT (一重口径, 保证已有批次行为完全不变)
 
 profile 字段说明见 profiles/default.json 同目录的 README.md。
 注意: 正则在模块 import 时编译, 所以 profile 必须在进程启动前确定;
@@ -15,14 +15,15 @@ import os, sys, json, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# 内置默认 = XX单位口径, 与 2026-11-03 定稿代码逐字一致
+# 内置默认 = 一重口径, 与 2026-11-03 定稿代码逐字一致
 DEFAULT = {
-    "name": "XX单位",
+    "name": "一重",
     # 月份位: 1~9 月用数字, 10/11/12 月用 A/B/C; OCR 场景额外允许 8(B 的常见误读, 由图号字典纠正)
-    "re_draw":        r"[Ff]\s*[0-9B][0-9AB][1-9ABC]\s*\d{4}",
-    "re_draw_ocr":    r"[Ff]\d{2}[1-9ABC8]\d{4}",
+    # 2026-11-05: 质保号可拆分成 -1/-2/-3 子号(同图号不同规格/件数), 图号捕获要带可选后缀
+    "re_draw":        r"[Ff]\s*[0-9B][0-9AB][1-9ABC]\s*\d{4}(?:\s*[-—]\s*\d{1,2})?",
+    "re_draw_ocr":    r"[Ff]\d{2}[1-9ABC8]\d{4}(?:\s*[-—–]\s*\d{1,2})?",
     "re_draw_anchor": r"(F\d{2}[1-9ABC]\d{4})",
-    "re_draw_qty":    r"\bF\d{2}[0-9A-Z]\d{3,5}\b",
+    "re_draw_qty":    r"\bF\d{2}[0-9A-Z]\d{3,5}(?:-\d{1,2})?\b",
     "re_range":       r"([FG]\d{2}[1-9ABC])(\d{4})[~-](\d{4})",
     "re_pdf_name":    r"[FG]\d{2}[1-9ABC]\d{4}",
     "re_lu":          r"2[3-6]\d{4}",

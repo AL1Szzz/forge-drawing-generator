@@ -147,7 +147,7 @@ def build(batch_dir, dry=False):
             dh = next(iter(lu2draw[lu]))
             r["图号"] = dh
             r["图号置信"] = (r.get("图号置信") or "") + "|料单反查"
-        if not dh or not lu or "|" in lu:
+        if not dh or not lu:
             continue
         if (dh, lu) in seen:
             continue
@@ -237,7 +237,7 @@ def build(batch_dir, dry=False):
                 pass
     for r in jobs:
         dh, lu = r["图号"], r["炉号"]
-        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 昇-2510-02 F25A3393 只有成品小尺寸),
+        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批 质保号E 只有成品小尺寸),
         # 用图纸重量行直给串兜底解析
         spec = parse_spec(r) or parse_spec(r, raw=(r.get("图纸锻件尺寸") or "").strip())
         _m = (r.get("锻重kg") or "").strip()
@@ -263,7 +263,9 @@ def build(batch_dir, dry=False):
             if w_up <= 1000:
                 allow, tier = a0, "≤1T"
                 derived_note = "锻重未识别,按锻件尺寸推算上限%.0fkg≤1T,档位待确认" % w_up
-        _h0 = (ht.get(lu) or [{}])[0]
+        _h0 = (ht.get(lu) or next((ht[t] for t in lu.split("|") if t in ht), [{}]))[0]
+        # 单质保号跨多批次(如 质保号C: 批次2=N件/批次3=M件/批次4=K件):
+        # 热处理尺寸取第一个有卡片的批次(各批卡片同规格时一致), 出图标待复核
         try:
             import read_ht2
             h = read_ht2.pick_for(_h0, r.get("外径"), r.get("内径"), r.get("长度"))
@@ -323,8 +325,9 @@ def build(batch_dir, dry=False):
                 cfg = make_cfg(r, dh, lu, ws, allow, out_dir, False, spec_override=wd)
                 row.update(稿件类型="正式稿(图纸直给)", 补加mm="0(照用)",
                            问题="锻件尺寸为图纸重量行直给, 原样照用, 不需要热处理尺寸")
-                groups[("直给", dh, lu)] = {"items": [{"r": r, "lu": lu, "cfg": cfg,
-                                                       "row": row, "prov": False}]}
+                groups.setdefault(("直给", _base_dh(dh), lu, cfg["info_row"]["append_spec"]),
+                                  {"items": []})["items"].append(
+                    {"r": r, "lu": lu, "cfg": cfg, "row": row, "prov": False})
                 continue
 
         base = spec
@@ -364,13 +367,19 @@ def build(batch_dir, dry=False):
                 cf_members.setdefault(lu, []).append(
                     {"r": r, "dh": dh, "lu": lu, "row": row, "mass": mass})
                 continue
-        groups.setdefault(dh, {"items": []})["items"].append(
+        # 分组口径(用户 2026-11-05): 同尺寸+同批次 → 合一张图, 质保号(含 -1/-2 子号)都写上;
+        # 尺寸或批次不同 → 分开做。键 = 基底图号 + 炉号 + 最终锻件尺寸
+        groups.setdefault((_base_dh(dh), lu, _dims_key(cfg)),
+                          {"items": []})["items"].append(
             {"r": r, "lu": lu, "cfg": cfg, "row": row, "prov": provisional, "bk": bk})
 
-    def emit(cfg, show_dh, lu_txt, row, prov, r, out_name=None):
+    def emit(cfg, show_dh, lu_txt, row, prov, r, out_name=None, piece=None):
         """写 JSON + 出图"""
-        piece, wx, _q = _trace(r)
-        cfg["output_pdf"] = os.path.join(out_dir, "%s.pdf" % (out_name or ("%s_%s" % (show_dh, lu_txt))))
+        _piece, wx, _q = _trace(r)
+        if piece is None:
+            piece = _piece
+        fname = out_name or ("%s_%s" % (show_dh, lu_txt))
+        cfg["output_pdf"] = os.path.join(out_dir, "%s.pdf" % fname.replace("/", "_"))
         cfg["info_row"]["items"] = [show_dh, piece, wx, lu_txt]
         p = os.path.join(out_dir, os.path.basename(cfg["output_pdf"])[:-4] + ".json")
         json.dump(cfg, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -391,22 +400,47 @@ def build(batch_dir, dry=False):
 
     for key, g in groups.items():
         items = g["items"]
-        dh0 = items[0]["row"]["图号"]
+        dhs = sorted({it["row"]["图号"] for it in items})       # 质保号(含 -N 子号)
+        dh0 = dhs[0]
+        show_dh = "/".join(dhs)
         lus = sorted({it["lu"] for it in items})
-        lu_txt = merge_lu(lus, set(ht.keys()))
-        # 同质保号多尺寸时取最长件为代表, 并在清单里标注(绝不静默丢尺寸)
-        rep = max(items, key=lambda it: it["cfg"]["part"]["L"])
+        # 炉号串里的 "|" = 单质保号跨多批次(一页图写不下拆开记), 拍平后再合并显示
+        lus_flat = sorted({t for x in lus for t in x.split("|") if t})
+        lu_txt = merge_lu(lus_flat, set(ht.keys()))
+        # 同组尺寸已按键保证一致; 代表件仍取最长, 绝不静默丢尺寸
+        rep = max(items, key=lambda it: it["cfg"]["part"].get("L") or it["cfg"]["part"].get("A") or 0)
         sizes = sorted({"%s" % it["cfg"]["part"].get("L") for it in items})
         row = rep["row"]
+        row["图号"] = show_dh
         row["炉号"] = lu_txt
         note = []
         if len(lus) > 1:
             note.append("合并%d个批次" % len(lus))
+        if any("|" in x for x in lus):
+            note.append("单质保号跨%d个批次(%s), 热处理尺寸按首个有卡片的批次取, 请复核"
+                        % (len(lus_flat), lu_txt))
+        if len(dhs) > 1:
+            note.append("同批次同尺寸合并质保号%s" % "+".join(dhs))
         if len(sizes) > 1:
-            note.append("同质保号多尺寸(长度%s), 取最长" % "/".join(sizes))
+            note.append("多尺寸(长度%s), 取最长" % "/".join(sizes))
+        # 数量: 各页件号范围独立, 合并质保号时求和并留痕(绝不静默丢数量)
+        pieces, qty_parts = [], []
+        for it in items:
+            _p, _w, _q = _trace(it["r"])
+            if _p and _p not in pieces:
+                pieces.append(_p)
+            if str(_q).isdigit():
+                qty_parts.append(_q)
+        if len(dhs) > 1 and qty_parts:
+            if len(qty_parts) > 1:
+                note.append("数量%s=%d" % ("+".join(qty_parts), sum(int(x) for x in qty_parts)))
+            else:
+                note.append("数量合计%d(部分页件号范围未识别, 请复核)" % sum(int(x) for x in qty_parts))
         if note:
             row["问题"] = (row["问题"] + "; " + "; ".join(note)).strip("; ")
-        emit(rep["cfg"], dh0, lu_txt, row, rep["prov"], rep["r"])
+        emit(rep["cfg"], show_dh, lu_txt, row, rep["prov"], rep["r"],
+             out_name=("__".join(dhs) + "_" + lu_txt) if len(dhs) > 1 else None,
+             piece="+".join(pieces) if len(pieces) > 1 else None)
         # 清单显示最终锻件尺寸(不是成品尺寸); 规格已挪进 info_row.append_spec
         row["规格"] = rep["cfg"]["info_row"].get("append_spec") or ""
         report.append(row)
@@ -547,7 +581,7 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
                     "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 3.2}
             spec_txt = "\u00d8%d\u00d7\u00d8%d\u00d7%s" % (base["od"], base["id"], base["L"])
         elif base["shape"] == "solid" and base["L"] < base["D"] * 0.9:
-            # 厚度<直径的实心件 = 圆饼/盘类, 用双视图(俯视圆+侧视矩形), 2026-11-02 昇-2510-01
+            # 厚度<直径的实心件 = 圆饼/盘类, 用双视图(俯视圆+侧视矩形), 2026-11-02 某批
             part = {"shape": "disc", "D": base["D"], "L": base["L"]}
             spec_txt = "\u00d8%d\u00d7%s" % (base["D"], base["L"])
         else:
@@ -624,6 +658,24 @@ def _num2(x):
         return int(v) if v == int(v) else round(v, 1)
     except (ValueError, AttributeError):
         return 0
+
+
+def _base_dh(dh):
+    """质保号去掉 -1/-2 子号后缀(2026-11-05: 拆分子号要分别做图)"""
+    return re.sub(r"-\d{1,2}$", "", dh or "")
+
+
+def _dims_key(cfg):
+    """最终锻件尺寸的分组键: 同尺寸+同批次才允许合并一张图"""
+    p = cfg.get("part") or {}
+    s = p.get("shape")
+    if s == "tube":
+        return ("tube", p["fo"], p["fi"], p["L"])
+    if s == "block":
+        return ("block", p["A"], p["B"], p["L"])
+    if s == "disc":
+        return ("disc", p["D"], p["L"])
+    return ("solid", p.get("D"), p.get("L"))
 
 
 def scfg_part_txt(cfg):
