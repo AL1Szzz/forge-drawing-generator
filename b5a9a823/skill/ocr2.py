@@ -47,7 +47,7 @@ RE_TUBE = re.compile(r'[0OØøΦ⌀]?(\d{2,4})\s*[/]\s*[0OØøΦ⌀]?(\d{2,4})\s
 RE_DRAW = rx("re_draw_ocr")
 RE_LU = rx("re_lu_suf")      # 炉号(批次)可带 -1/-CR/重热 子号后缀, 2026-11-05
 # 重量行可能写成 "Ø941/ø350×838×8%=4261kg" —— 前面的尺寸就是**准确的锻件尺寸**
-# 注意两种 OCR 变异(2026-11-03 某批 实测):
+# 注意两种 OCR 变异(2026-11-03 昇-2510-02 实测):
 #   ① Ø 被读成 0 → "05390/04990X198X6%=5377KG", 所以要允许前导 0/O
 #   ② 百分比前的乘号被读成大写 X → "X6%", 所以乘号集合要含 x/X/*
 RE_WT_DIM = re.compile(
@@ -68,7 +68,9 @@ def parse_weight_line(blocks):
             if m2 and c >= 0.6 and "HCH" not in t:
                 mass = m2.group(1)
     return mass, dim
-MAT = re.compile(r'(SA508[ -]?Gr\.?3|42CrMo|20MnMo|45#|SA105|SA350|Q345R|16Mn|SA182|304|316L)')
+# 材质: 纯数字/短代号(304/316L/45#)严禁命中编码子串(如 H223495-96450304045N 里的"0304")
+#       → 命中处前后都不能是字母数字; 字母开头的牌号(42CrMo/SA508...)本身自包含, 无需边界
+MAT = re.compile(r'(?:(?<=[^0-9A-Za-z])|^)(304|316L|45#)(?=[^0-9A-Za-z]|$)|(SA508[ -]?Gr\.?3|42CrMo|20MnMo|SA105|SA350|Q345R|16Mn|SA182)')
 
 
 def parse_fields(blocks, legal_draws=None, valid_lu=None):
@@ -81,9 +83,9 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
         if not f["图号"] or c > f["图号conf"]:
             m = RE_DRAW.search(t)
             if m and "HCH" not in t:
-                cand = re.sub(r"\s+", "", m.group(0)).upper()      # 质保号A 或 质保号A-1
+                cand = re.sub(r"\s+", "", m.group(0)).upper()      # F24B1373 或 F24B1373-1
                 # 质保号子号(2026-11-05): 同图号拆 -1/-2/-3, 后缀必须保留, 否则会把
-                # 不同规格的页并成一张图(实测 质保号A 三页 Ø21×L1/L2/L1 被并成 850)
+                # 不同规格的页并成一张图(实测 F24B1373 三页 Ø21×800/850/800 被并成 850)
                 ms = re.search(r"[-—–](\d{1,2})$", cand)
                 suf, base = (ms.group(0), cand[:ms.start()]) if ms else ("", cand)
                 if legal_draws:
@@ -92,7 +94,7 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
                     if len(near) == 1:
                         f["图号"], f["图号conf"] = near[0] + suf, c
                     elif not near and re.fullmatch(r"F\d{2}[1-9ABC8]\d{4}", base):
-                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 图号F 而文件名只写到 3401):
+                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 F25A3402 而文件名只写到 3401):
                         # 保留原值但降置信 → 复核清单提示人工确认, 而不是整页静默丢掉
                         f["图号"], f["图号conf"] = base + suf, min(c, 0.92)
                 else:
@@ -101,7 +103,7 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
             m = RE_LU.search(t)
             if m:
                 cand_lu = norm_lu(m.group(0))
-                # 带子号后缀的炉号: 卡片若是 批次10-1 而图纸写 批次10, 也认(后面按批次找卡时标待核)
+                # 带子号后缀的炉号: 卡片若是 248446-1 而图纸写 248446, 也认(后面按批次找卡时标待核)
                 if (not valid_lu or cand_lu in valid_lu
                         or (cand_lu.isdigit() and any(v.startswith(cand_lu + "-") for v in valid_lu))):
                     f["炉号"], f["炉号conf"] = cand_lu, c
@@ -113,10 +115,12 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
             mm2 = RE_OD.search(t)
             if mm2 and c >= 0.6 and "HCH" not in t and len(t) < 18:
                 f.update(外径=mm2.group(1), 长度=mm2.group(2), 规格conf=c, 规格原文=t)
-        if not f["材质"]:
-            m = MAT.search(t)
-            if m:
-                f["材质"] = m.group(1)
+        ms = list(MAT.finditer(t))
+        if ms:
+            # 块内/页内优先字母牌号(42CrMo/SA508...), 纯数字(304/316L)仅作兜底
+            cand = next((m.group(2) for m in ms if m.group(2)), ms[0].group(1) or ms[0].group(2))
+            if not f["材质"] or (f["材质"].isdigit() and not cand.isdigit()):
+                f["材质"] = cand
         if not f["锻重kg"]:
             m = RE_WT.search(t)
             if m:
