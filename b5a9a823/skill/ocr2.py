@@ -95,9 +95,9 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
         if not f["图号"] or c > f["图号conf"]:
             m = RE_DRAW.search(t)
             if m and "HCH" not in t:
-                cand = re.sub(r"\s+", "", m.group(0)).upper()      # F24B1373 或 F24B1373-1
+                cand = re.sub(r"\s+", "", m.group(0)).upper()      # 质保号X 或 质保号X-1
                 # 质保号子号(2026-11-05): 同图号拆 -1/-2/-3, 后缀必须保留, 否则会把
-                # 不同规格的页并成一张图(实测 F24B1373 三页 Ø21×800/850/800 被并成 850)
+                # 不同规格的页并成一张图(实测 质保号X 三页 Ø21×800/850/800 被并成 850)
                 ms = re.search(r"[-—–](\d{1,2})$", cand)
                 suf, base = (ms.group(0), cand[:ms.start()]) if ms else ("", cand)
                 if legal_draws:
@@ -123,7 +123,7 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
                 labeled = (re.search(r"炉号\s*[：:·]?\s*$", t[:m.start()])
                            or re.fullmatch(r"炉号\s*[：:·]?", prev_t)) is not None
                 standalone = t == m.group(0).strip()
-                # 带子号后缀的炉号: 卡片若是 248446-1 而图纸写 248446, 也认(后面按批次找卡时标待核)
+                # 带子号后缀的炉号: 卡片若是 炉号X-1 而图纸写 炉号X, 也认(后面按批次找卡时标待核)
                 if (not valid_lu or cand_lu in valid_lu or labeled
                         or (standalone and cand_lu.isdigit() and len(cand_lu) == 6)
                         or (cand_lu.isdigit() and any(v.startswith(cand_lu + "-") for v in valid_lu))):
