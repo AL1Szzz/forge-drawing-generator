@@ -23,6 +23,7 @@ from collections import defaultdict
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from config import rx, norm_lu
+from ocr2 import RE_WT_DIM                 # 从 OCR 原文重取完整重量行尺寸(列可能被 OCR 截断)
 
 TIERS = [(1000, 10), (3000, 15), (float("inf"), 20)]   # (上限kg, 双边补加mm)
 MIN_SOLID_D = 50                                     # 圆棒原始直径下限(用户 2026-11-13 改口径)
@@ -52,17 +53,44 @@ def _num(x):
 _D = r"[ØøΦ⌀φ]?"
 _N = r"\d{2,5}(?:\.\d+)?"
 RE_RAW_TUBE = re.compile(r"(%s\s*%s)\s*[/]\s*(%s\s*%s)\s*[×xX*]\s*(%s)" % (_D, _N, _D, _N, _N))
+# 长方体三向 A×B×L (无 Ø 无斜杠): 1650×830×179 / 2370×830X189。
+# 末位负向断言防止把 "…×8%=KG" 的百分比段当第四维。
+RE_RAW_BLOCK = re.compile(
+    r"(\d{2,5})\s*[×xX*]\s*(\d{2,5})\s*[×xX*]\s*(\d{2,5})(?!\s*[×xX*]\s*\d{2})")
 RE_RAW_SOLID = re.compile(r"(%s)\s*(%s)\s*[×xX*]\s*(%s)" % (_D, _N, _N))
 
 
+def direct_dim_text(r):
+    """图纸直给尺寸串。manifest 的『图纸锻件尺寸』列有时被 OCR 切断
+    (如 '0800/600×632' 只剩 '600X632' → 环会画成实心圆棒), 而『原始OCR』
+    里保存了完整重量行, 用 RE_WT_DIM 重取数字段更多的那个补全。
+    优先列值(已人工核对过), 只有原文明显更全时才替换。"""
+    wd = (r.get("图纸锻件尺寸") or "").strip()
+    best = ""
+    for b in (r.get("原始OCR") or "").split("|"):
+        t = re.sub(r"\s+", "", b)
+        for m in RE_WT_DIM.finditer(t):
+            s = re.sub(r"^0(?=[1-9])", "Ø", m.group(1))
+            if len(re.findall(r"\d+", s)) > len(re.findall(r"\d+", best)):
+                best = s
+    if len(re.findall(r"\d+", best)) > len(re.findall(r"\d+", wd)):
+        return best
+    return wd
+
+
 def parse_spec(row, raw=None):
-    """manifest 拆列(外径/内径/长度); 或直接解析规格串如 'Ø941/ø350×838'"""
+    """manifest 拆列(外径/内径/长度); 或直接解析规格串如 'Ø941/ø350×838'。
+    形态优先级: 环(A/B×L) > 方块(A×B×L) > 圆棒(D×L) —— 2026-11-13 某批"""
     if raw:
         m = RE_RAW_TUBE.search(raw)
         if m:
             a = _num(re.sub(r"[^\d.]", "", m.group(1)))
             b = _num(re.sub(r"[^\d.]", "", m.group(2)))
             return {"shape": "tube", "od": max(a, b), "id": min(a, b), "L": _num(m.group(3))}
+        m = RE_RAW_BLOCK.search(raw)
+        if m:
+            return {"shape": "block", "od": _num(m.group(1)),
+                    "id": _num(m.group(2)), "L": _num(m.group(3))}
         m = RE_RAW_SOLID.search(raw)
         if m:
             return {"shape": "solid", "D": _num(m.group(2)), "L": _num(m.group(3))}
@@ -327,7 +355,7 @@ def build(batch_dir, dry=False):
         #   1) 图纸"重量行"直接写了尺寸 → 那就是准确锻件尺寸, 原样照用, 不再加余量
         #   2) 否则: 热处理尺寸 + 余量档
         #   3) 热处理尺寸也没有 → 退回成品尺寸加余量, 标"待核稿"
-        wd = (r.get("图纸锻件尺寸") or "").strip()
+        wd = direct_dim_text(r)
         if wd:
             ws = parse_spec({"外径": "", "内径": "", "长度": ""}, raw=wd)
             if ws:
@@ -475,15 +503,20 @@ def build(batch_dir, dry=False):
             m = RE_SAMPLE_DIM.search(raw)
             if not m:
                 continue
-            D_s, L_s = int(m.group(1)), int(m.group(2))
+            A_s, B_s, C_s = int(m.group(1)), int(m.group(2)), m.group(3)
             mw = RE_SAMPLE_KG.search(raw[m.end():m.end() + 45])
             sw = mw.group(1) if mw else ""
             srow = dict(it["row"])
             srow["图号"] = dh0 + "样"
             srow["炉号"] = it["lu"]
-            scfg = make_cfg(it["r"], srow["图号"], it["lu"],
-                            {"shape": "solid", "D": D_s, "L": L_s}, 0, out_dir, False,
-                            spec_override="Ø%d×%d" % (D_s, L_s))
+            if C_s:                              # 三向 → 长方体, 不再画成圆棒/圆饼
+                sbase = {"shape": "block", "od": A_s, "id": B_s, "L": int(C_s)}
+                stxt = "%d×%d×%d" % (A_s, B_s, int(C_s))
+            else:
+                sbase = {"shape": "solid", "D": A_s, "L": B_s}
+                stxt = "Ø%d×%d" % (A_s, B_s)
+            scfg = make_cfg(it["r"], srow["图号"], it["lu"], sbase, 0, out_dir, False,
+                            spec_override=stxt)
             scfg["weight"] = (sw + "kg") if sw else ""
             srow.update(规格=scfg["info_row"]["append_spec"], 余量档="", 补加mm="0(照用)",
                         锻重kg=sw, 稿件类型="正式稿(图纸直给)", 置信=it["row"]["置信"],
@@ -659,13 +692,22 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
     if spec_override:
         # 图纸"重量行"直接写了尺寸 → 那就是准确锻件尺寸, 原样照用, 不再加余量
         _note = ""
-        m51 = re.search(r"(\d+\s*合\s*\d+)", spec_override)   # 如 "(5合1)": 5件合锻1根
+        m51 = re.search(r"(\d+\s*合\s*\d+)", spec_override)
+        if not m51 and not re.search(r"样\s*$", dh or ""):
+            # 本体图: 从 OCR 原文回捞 (5合1)/(2合1) 标记; 样图继承本体的行,
+            # 不该把本体的合锻数带上去(2026-11-13 回归发现)。
+            m51 = re.search(r"(\d+\s*合\s*\d+)", r.get("原始OCR") or "")
         if m51:
             _note = "(%s)" % re.sub(r"\s", "", m51.group(1))
         if base["shape"] == "tube":
             part = {"shape": "tube", "fo": base["od"], "fi": base["id"], "L": base["L"],
                     "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 3.2}
             spec_txt = "\u00d8%d\u00d7\u00d8%d\u00d7%s" % (base["od"], base["id"], base["L"])
+        elif base["shape"] == "block":
+            # 图纸直给的长方体(2026-11-13 某批): 1650×830×179 这类三向尺寸
+            # 原样照抄, 不加 Ø、不加余量、不画成圆饼。
+            part = {"shape": "block", "A": base["od"], "B": base["id"], "L": base["L"]}
+            spec_txt = "%s×%s×%s" % (base["od"], base["id"], base["L"])
         elif base["shape"] == "solid" and base["L"] < base["D"] * 0.9:
             # 厚度<直径的实心件 = 圆饼/盘类, 用双视图(俯视圆+侧视矩形), 2026-11-02 某批
             part = {"shape": "disc", "D": base["D"], "L": base["L"]}
@@ -717,14 +759,21 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
 RE_PIECE = re.compile(r"(\d{2,3})\s*[-—]?\s*[(（]\s*(\d{2,3})\s*[~～]\s*(\d{2,3})\s*[)）]")
 RE_WX = re.compile(r"WX\s*(\d{8,})")
 NAME_STOP = ("名称", "材质", "数量", "填图", "复核", "批准", "版本", "序号", "炉号",
-             "张娟", "钱达", "与序", "低应力", "标记", "合锻", "无锡", "锻件尺寸图")
+             "张娟", "钱达", "与序", "低应力", "标记", "合锻", "无锡", "锻件尺寸图",
+             "检验", "验收", "验效", "制造", "技术条件", "冲击", "性能", "要求", "按")
+# 标题栏"名称"只可能是短零件名(2026-11-13 某批): OCR 原文里的技术要求句
+# 更长, 曾把"进行制造、检验和验效。""的按伸与冲击性能。"抓进名称格。
+PART_KW = ("座筒", "上板", "立板", "耳板", "法兰", "筒", "板", "环", "轴", "盘",
+           "盖", "圈", "座", "支架", "管", "块", "棒", "饼", "轮", "套", "体", "坯", "锻件")
 
 
 RE_SAMPLE_W = re.compile(r"(\d+(?:\.\d+)?)\s*kg.{0,14}?样\s*(\d+(?:\.\d+)?)\s*kg", re.I | re.S)
 # 图纸/料单重量行把"加样后的尺寸"也直接印出来: "/样Ø70×1030×3‰=32.1kg"
 # (用户 2026-11-13: 图纸上写了尺寸的必须原样直给, 无论是不是加样件)
+# 第三段可选: "/样Ø70×1030×3‰=32.1kg" 是圆棒, "/样1320×728×130×8%=1059KG" 是长方体
 RE_SAMPLE_DIM = re.compile(
-    r"[/／]\s*样\s*[ØΦφøα中oO]?\s*(\d{2,4})\s*[×xX*]\s*(\d{2,5})(?:\s*[×xX*]\s*\d{2,4})?",
+    r"[/／]\s*样\s*[ØΦφøα中oO]?\s*(\d{2,4})\s*[×xX*]\s*(\d{2,5})"
+    r"(?:\s*[×xX*]\s*(\d{2,5}))?(?!\s*[×xX*]\s*\d{2})",
     re.I)
 RE_SAMPLE_KG = re.compile(r"(\d+(?:\.\d+)?)\s*[kK][gG]")
 # 长方体: 三个尺寸 110×326×450 (无 Ø), 区别于圆棒 ØD×L
@@ -806,6 +855,10 @@ def scfg_part_txt(cfg):
     p = cfg["part"]
     if p["shape"] == "tube":
         return "Ø%s/Ø%s×%s" % (p["fo"], p["fi"], p["L"])
+    if p["shape"] == "block":
+        return "%s×%s×%s" % (p["A"], p["B"], p["L"])
+    if p["shape"] == "disc":
+        return "Ø%s×%s" % (p["D"], p["L"])
     return "Ø%s×%s" % (p["D"], p["L"])
 
 
@@ -833,19 +886,23 @@ def _name(r):
     cands = []
     for b in (r.get("原始OCR") or "").split("|"):
         b = b.strip()
-        if not b or len(b) < 3:
+        if not b or len(b) < 2 or len(b) > 10:
             continue
         if re.search(r"[A-Za-z]", b):
+            continue
+        # 说明句/技术要求带标点或书名号, 一律不进名称格
+        if re.search(r"[，。、；：《》（）()％%~…\-—]", b):
             continue
         if len(re.findall(r"[\u4e00-\u9fff]", b)) / len(b.replace(" ", "")) < 0.6:
             continue
         if any(k in b for k in NAME_STOP):
             continue
         cands.append(b)
-    if not cands:
+    # 只认含零件名关键字的候选; 否则宁可写"锻件"(绝不把说明句当名称)
+    pref = [c for c in cands if any(k in c for k in PART_KW)]
+    if not pref:
         return "锻件"
-    pref = [c for c in cands if "毛坯" in c or "锻件" in c]
-    return max(pref or cands, key=len)[:14]
+    return max(pref, key=len)[:14]
 
 
 def _pack(r, dh, lu, part, spec_txt, out_dir, src):

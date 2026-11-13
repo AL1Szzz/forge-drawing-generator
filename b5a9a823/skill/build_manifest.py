@@ -195,7 +195,9 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             f["名称"] = ""          # 名称易误抓签名人, 宁可留空
             f["pdf"] = os.path.basename(pdf)
             f["page"] = i + 1
-            f["原始OCR"] = " | ".join(b[0] for b in blocks)[:300]
+            # 保留完整 OCR 原文(2026-11-13 某批): 300 字会把右下角重量行
+            # 连同 "/样1320×728×130×8%=1059KG" 一起截掉, 导致加样件漏出图。
+            f["原始OCR"] = " | ".join(b[0] for b in blocks)[:1200]
             conf = max(f["图号conf"], 0)
             f["图号置信"] = ("exact" if conf > .95 else "字典纠正" if conf else "未识别")
             rows.append(f)

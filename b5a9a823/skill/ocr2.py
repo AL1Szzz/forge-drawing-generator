@@ -71,7 +71,7 @@ def parse_weight_line(blocks):
 # 材质: 牌号模式匹配(字典记不全, 如 12Cr2Mo1/06Cr18Ni11Ti 不在老字典里) —— 2026-11-13
 #   规则: ① 字母开头牌号 SA508[ Gr.3]/SA105...; ② 数字开头国标牌号(06Cr18Ni11Ti/42CrMo/16Mn...),
 #         要求 ≥2 个字母, 且排除 "40X950" 这类尺寸串(数字X数字); ③ 纯数字短牌号(304/316L/45#)
-#         必须前后非字母数字, 防命中编码子串(H223495-96450304045N 里的"0304"曾误读 304)
+#         必须前后非字母数字, 防命中编码子串(编码X 里的"0304"曾误读 304)
 MAT = re.compile(
     r'(?<![0-9A-Za-z])('
     r'SA\d{3}(?:[ -]?Gr\.?[ -]?\d)?'
@@ -118,14 +118,14 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
             if m:
                 cand_lu = norm_lu(m.group(0))
                 # 图纸上的炉号即使没有对应热处理卡也采信, 三种依据(卡片不全 ≠ 图纸错,
-                # 某批 炉号 255926/255927 曾被卡片过滤误杀):
-                #   ① 同块: "炉号 255926" 标签直接引导
+                # 某批 炉号 炉号X/炉号X 曾被卡片过滤误杀):
+                #   ① 同块: "炉号 炉号X" 标签直接引导
                 #   ② 上一块就是"炉号"标签(标签和数字常被 OCR 拆成两块)
                 #   ③ 本块就是纯炉号数字本身(标题栏里孤立的 6 位数字)
                 labeled = (re.search(r"炉号\s*[：:·]?\s*$", t[:m.start()])
                            or re.fullmatch(r"炉号\s*[：:·]?", prev_t)) is not None
                 standalone = t == m.group(0).strip()
-                # 带子号后缀的炉号: 卡片若是 248446-1 而图纸写 248446, 也认(后面按批次找卡时标待核)
+                # 带子号后缀的炉号: 卡片若是 炉号X-1 而图纸写 炉号X, 也认(后面按批次找卡时标待核)
                 if (not valid_lu or cand_lu in valid_lu or labeled
                         or (standalone and cand_lu.isdigit() and len(cand_lu) == 6)
                         or (cand_lu.isdigit() and any(v.startswith(cand_lu + "-") for v in valid_lu))):
