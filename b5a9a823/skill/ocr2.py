@@ -106,7 +106,7 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
                     if len(near) == 1:
                         f["图号"], f["图号conf"] = near[0] + suf, c
                     elif not near and re.fullmatch(r"F\d{2}[1-9ABC8]\d{4}", base):
-                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 F25A3402 而文件名只写到 3401):
+                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 某图号 而文件名只写到前一张):
                         # 保留原值但降置信 → 复核清单提示人工确认, 而不是整页静默丢掉
                         f["图号"], f["图号conf"] = base + suf, min(c, 0.92)
                 else:
