@@ -81,7 +81,7 @@ def get(key, default=None):
 
 def norm_lu(s):
     """炉号(批次)规范化: 去空格, 破折号/长横统一成半角 '-', 大写。
-    248421 — 1 -> 248421-1; 248446二次重热 原样保留。"""
+    炉号X — 1 -> 炉号X-1; 248446二次重热 原样保留。"""
     t = re.sub(r"\s+", "", str(s or ""))
     t = t.replace("—", "-").replace("－", "-").replace("_", "-")
     return t.upper()
