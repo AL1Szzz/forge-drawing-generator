@@ -148,7 +148,9 @@ def draw_tube(page, cx, cy, avail_w, avail_h, fo, fi, L, ht_do, ht_di, fs=26, cf
                    color=(0, 0, 0), width=0.7, dashes=(10, 3, 2, 3))
 
     # 尺寸标注
-    dim_h(page, y1 - 40, x1, x2, "Ø%d" % fi, fs=fs)
+    # 内径标注的箭头端点必须落在内孔引出线(ib1/ib2)上; 之前误用外轮廓 x1/x2,
+    # 箭头与引出线错开整整一个壁厚(用户 2026-11-13 指出环图箭头没对齐)
+    dim_h(page, y1 - 40, ib1, ib2, "Ø%d" % fi, fs=fs)
     page.draw_line(fitz.Point(ib1, y1 - 4), fitz.Point(ib1, y1 - 46), color=(0, 0, 0), width=0.7)
     page.draw_line(fitz.Point(ib2, y1 - 4), fitz.Point(ib2, y1 - 46), color=(0, 0, 0), width=0.7)
     dim_h(page, y2 + 46, x1, x2, "Ø%d" % fo, fs=fs)

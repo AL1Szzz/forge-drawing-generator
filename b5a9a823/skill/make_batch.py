@@ -254,6 +254,19 @@ def build(batch_dir, dry=False):
     cf_members = {}
 
     report, made, prov_made, groups = [], [], [], {}
+    # 合锻页号挂载(2026-11-13 某批): 图纸上写"与质保号X合锻"的页本身
+    # 没有锻件尺寸(两件共用一根毛坯), 不单独出图, 但它的质保号必须与伙伴页
+    # 写在同一张图上, 否则这个号会彻底丢掉。
+    RE_COFORGE = re.compile(r"与\s*(F\d{7}(?:-\d+)?)\s*合\s*锻")
+    co_forge = {}
+    for r0 in jobs:
+        m0 = RE_COFORGE.search(r0.get("原始OCR") or "")
+        if m0 and r0.get("图号") and _base_dh(r0["图号"]) != _base_dh(m0.group(1)):
+            co_forge.setdefault(_base_dh(m0.group(1)), set()).add(r0["图号"])
+    co_pages = {d for s in co_forge.values() for d in s}
+    if co_pages:
+        print("合锻页 %d 张(不单独出图, 质保号挂到伙伴图): %s" %
+              (len(co_pages), "/".join(sorted(co_pages))))
     # 合锻件: 标"与序号N合锻"的行没有单件重量, 档位按同炉号(合锻伙伴)的锻重取(用户 2026-11-02)
     lu_w = {}
     for r0 in jobs:
@@ -264,6 +277,8 @@ def build(batch_dir, dry=False):
             except ValueError:
                 pass
     for r in jobs:
+        if r["图号"] in co_pages:          # 合锻页: 号挂到伙伴图, 本身不单独出图
+            continue
         dh, lu = r["图号"], r["炉号"]
         # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批 质保号X 只有成品小尺寸),
         # 用图纸重量行直给串兜底解析
@@ -447,6 +462,11 @@ def build(batch_dir, dry=False):
     for key, g in groups.items():
         items = g["items"]
         dhs = sorted({it["row"]["图号"] for it in items})       # 质保号(含 -N 子号)
+        # 合锻页(无锻件尺寸、不单独出图)的质保号挂到伙伴图, 与主件竖排写在一块
+        extra_dhs = sorted({d for dh in dhs for d in co_forge.get(_base_dh(dh), ())
+                            if d not in dhs})
+        if extra_dhs:
+            dhs = sorted(set(dhs) | set(extra_dhs))
         dh0 = dhs[0]
         show_dh = "/".join(dhs)
         lus = sorted({it["lu"] for it in items})
@@ -466,7 +486,10 @@ def build(batch_dir, dry=False):
             note.append("单质保号跨%d个批次(%s), 热处理尺寸按首个有卡片的批次取, 请复核"
                         % (len(lus_flat), lu_txt))
         if len(dhs) > 1:
-            note.append("同批次同尺寸合并质保号%s" % "+".join(dhs))
+            if extra_dhs:
+                note.append("含合锻页%s, 质保号写在同一张图(共用一根毛坯, 尺寸按主件)" % "+".join(extra_dhs))
+            else:
+                note.append("同批次同尺寸合并质保号%s" % "+".join(dhs))
         if len(sizes) > 1:
             note.append("多尺寸(长度%s), 取最长" % "/".join(sizes))
         # 数量: 各页件号范围独立, 合并质保号时求和并留痕(绝不静默丢数量)

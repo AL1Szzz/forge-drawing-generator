@@ -74,7 +74,7 @@ def parse_weight_line(blocks):
 #         必须前后非字母数字, 防命中编码子串(编码X 里的"0304"曾误读 304)
 MAT = re.compile(
     r'(?<![0-9A-Za-z])('
-    r'SA\d{3}(?:[ -]?Gr\.?[ -]?\d)?'
+    r'SA\d{3}(?:[ -]?Gr\.?[ -]?\d|[-–— ]?\d{1,2})?'
     r'|Q\d{3}[A-Za-z]?'
     r'|\d{1,2}[A-Za-z][A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*'
     r'|316L|304|45#'
@@ -94,7 +94,10 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
     prev_t = ""
     for txt, c, x0, y0, x1, y1 in blocks:
         t = txt.strip()
-        if not f["图号"] or c > f["图号conf"]:
+        # "与质保号X合锻"是引用别件的号, 不是本页图号(2026-11-13 某批:
+        # 该手写块置信常高于真正的标题栏图号, 会把 质保号X/质保号X 覆盖成伙伴号)
+        _co_ref = bool(re.search(r"合\s*锻", t)) and bool(re.search(r"与|和", t))
+        if (not f["图号"] or c > f["图号conf"]) and not _co_ref:
             m = RE_DRAW.search(t)
             if m and "HCH" not in t:
                 cand = re.sub(r"\s+", "", m.group(0)).upper()      # 质保号X 或 质保号X-1
@@ -148,6 +151,9 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
             # OCR 常把牌号末位 1 读成 l(12Cr2Mo1 -> 12Cr2Mol), 牌号里没有以 l 结尾的, 归一
             if cand.endswith('l') and re.search(r'\d', cand):
                 cand = cand[:-1] + '1'
+            # SA508 Gr.3 与 SA508-3 是同一牌号, 统一写成 SA508-3(用户 2026-11-13)
+            if re.fullmatch(r"SA508\s*Gr\.?\s*3", cand, re.I):
+                cand = "SA508-3"
             if not f["材质"] or (not re.search(r'[A-Za-z]', f["材质"])
                                  and re.search(r'[A-Za-z]', cand)):
                 f["材质"] = cand
