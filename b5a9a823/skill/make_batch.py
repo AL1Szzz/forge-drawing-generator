@@ -237,7 +237,7 @@ def build(batch_dir, dry=False):
                 pass
     for r in jobs:
         dh, lu = r["图号"], r["炉号"]
-        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批 质保号F 只有成品小尺寸),
+        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批 F25A3393 只有成品小尺寸),
         # 用图纸重量行直给串兜底解析
         spec = parse_spec(r) or parse_spec(r, raw=(r.get("图纸锻件尺寸") or "").strip())
         _m = (r.get("锻重kg") or "").strip()
@@ -269,7 +269,7 @@ def build(batch_dir, dry=False):
             if _rows:
                 break
         _h0 = _rows[0] if _rows else {}
-        # 单质保号跨多批次(如 质保号C: 批次2=42件/批次3=70件/批次4=70件):
+        # 单质保号跨多批次(如 F24B1374-4: 248372=42件/248373=70件/248374=70件):
         # 热处理尺寸取第一个有卡片的批次(各批卡片同规格时一致), 出图标待复核
         try:
             import read_ht2
@@ -412,6 +412,7 @@ def build(batch_dir, dry=False):
         print("   出图失败 %s %s: %s" % (show_dh, lu_txt, brief[:220]), flush=True)
         return None
 
+    samp_lu_done = set()      # 已出样图的炉号(每个炉号只出一张样图)
     for key, g in groups.items():
         items = g["items"]
         dhs = sorted({it["row"]["图号"] for it in items})       # 质保号(含 -N 子号)
@@ -477,6 +478,7 @@ def build(batch_dir, dry=False):
             emit(scfg, dh0 + "样", it["lu"], srow, False, it["r"])
             srow["规格"] = scfg["info_row"]["append_spec"]
             report.append(srow)
+            samp_lu_done.add(it["lu"])
             _blk_done = True
             break                                # 同一质保号只出一张样图
         if _blk_done:
@@ -528,7 +530,41 @@ def build(batch_dir, dry=False):
             emit(scfg, dh0 + "样", it["lu"], srow, False, r)
             srow["规格"] = scfg["info_row"]["append_spec"]
             report.append(srow)
+            samp_lu_done.add(it["lu"])
             break                                # 同一质保号只出一张样图
+
+        # 加样件兜底③: 大纲取样行有尺寸就出样图(图纸"/样xxKG"标记可能被 OCR 漏读,
+        # 某批 质保号C 样因此丢过一张, 2026-11-13); 每炉号只出一张
+        for it in items:
+            if it["lu"] in samp_lu_done:
+                continue
+            s = smp.get(it["lu"])
+            if not s or not (s.get("取样长度") or "").strip():
+                continue
+            shape = (s.get("形状") or "solid").strip() or "solid"
+            L_s = _num2(s["取样长度"])
+            if shape == "tube":
+                sbase = {"shape": "tube", "od": _num2(s["取样外径"]), "id": _num2(s["取样内径"]), "L": L_s}
+            elif shape == "block":
+                sbase = {"shape": "block", "od": _num2(s["取样外径"]), "id": _num2(s["取样内径"]),
+                         "L": L_s}
+            else:
+                sbase = {"shape": "solid", "D": _num2(s["取样外径"]), "L": L_s}
+            srow = dict(it["row"])
+            srow["图号"] = re.sub(r"-\d+$", "", it["row"]["图号"].split("/")[0]) + "样"
+            srow["炉号"] = it["lu"]
+            scfg = make_cfg(it["r"], srow["图号"], it["lu"], sbase, 10, out_dir, False)
+            scfg["weight"] = ""
+            _sq = (s.get("取样件数") or "").strip()
+            srow.update(规格=scfg["info_row"]["append_spec"], 余量档="", 补加mm="10(每向)",
+                        稿件类型="正式稿", 置信=it["row"]["置信"],
+                        问题=("加样件%s, 尺寸取自大纲取样行+10(请复核)"
+                              % (("(%s件)" % _sq) if _sq else "")))
+            emit(scfg, srow["图号"], it["lu"], srow, False, it["r"])
+            srow["规格"] = scfg["info_row"]["append_spec"]
+            report.append(srow)
+            samp_lu_done.add(it["lu"])
+            break
 
     # 合锻棒料图: 一根棒料一张, 图上把所有质保号、炉号写在一起(用户 2026-11-02)
     for lu, mem in sorted(cf_members.items()):
@@ -650,7 +686,7 @@ RE_BLOCK = re.compile(r"(?<![\d.])(\d{2,4})\s*[×xX*]\s*(\d{2,4})\s*[×xX*]\s*(\
 
 def merge_lu(lus, known=None):
     """多批次写成一段: 连续(或缺失的中间炉号是本批已知炉号)则用 首～尾, 否则逐个～相连。
-    带子号后缀的炉号(批次9-1/批次10重热)不参与数字连写, 原样列在后面(绝不丢, 2026-11-05)。"""
+    带子号后缀的炉号(248421-1/248446重热)不参与数字连写, 原样列在后面(绝不丢, 2026-11-05)。"""
     v, suf = [], []
     for x in lus:
         s = norm_lu(x)
@@ -678,7 +714,7 @@ def merge_lu(lus, known=None):
 
 def ht_get(ht, lu):
     """按炉号取热处理卡行。返回 (rows, 命中键, 是否精确)。
-    图纸写 批次10-1 而卡片只有 批次10, 或反之, 都允许近似命中(出图标待核)。"""
+    图纸写 248446-1 而卡片只有 248446, 或反之, 都允许近似命中(出图标待核)。"""
     lu = norm_lu(lu)
     if lu in ht:
         return ht[lu], lu, True
