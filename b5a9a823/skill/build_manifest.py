@@ -56,13 +56,19 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             ht_map.setdefault(norm_lu(m.group(0)), []).append(os.path.basename(f))
     print("热处理报告 %d 份, 唯一炉号 %d 个" % (len(ht_files), len(ht_map)))
 
-    # 2) 合法图号集合 = 图纸文件名里的"起~止"范围(如 XXX1362~1424)
+    # 2) 合法图号集合 = 图纸文件名里的"起~止"范围(如 XXX1362~1424);
+    #    单图号文件名(如 质保号X.pdf, 不带~范围)也算 1 个合法图号
     legal_draws = set()
     for f in drawings:
-        m = rx("re_range").search(os.path.basename(f))
+        bn = os.path.basename(f)
+        m = rx("re_range").search(bn)
         if m:
             a, b = int(m.group(2)), int(m.group(3))
             legal_draws |= {"%s%04d" % (m.group(1), i) for i in range(a, b + 1)}
+        else:
+            m1 = rx("re_pdf_name").search(bn)
+            if m1:
+                legal_draws.add(re.sub(r"\s+", "", m1.group(0)).upper())
     print("图号全集 %d 个: %s ... %s" % (len(legal_draws),
           min(legal_draws) if legal_draws else '-', max(legal_draws) if legal_draws else '-'))
 

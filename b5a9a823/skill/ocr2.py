@@ -80,8 +80,10 @@ MAT = re.compile(
     r'|316L|304|45#'
     r')(?![0-9A-Za-z])')
 
-# 尺寸串形状(数字[.]X数字): 不是材质
-_NOT_MAT = re.compile(r'[0-9.]+\s*[Xx×*]\s*[0-9.]+')
+# 尺寸串形状(数字X数字, 可多段): 不是材质 —— "64X211X250" 方块尺寸曾误读成材质
+_NOT_MAT = re.compile(r'[0-9.]+\s*[Xx×*]\s*[0-9.]+(?:\s*[Xx×*]\s*[0-9.]+)*')
+# 单位/标记尾巴: 3XL(尺寸标记)、45.16KG、50mm 等不是材质(单位必须实际存在才拒)
+_UNIT_TAIL = re.compile(r'\d\s*(?:XL|CM|MM|KG)\s*$', re.I)
 
 
 def parse_fields(blocks, legal_draws=None, valid_lu=None):
@@ -106,7 +108,7 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
                     if len(near) == 1:
                         f["图号"], f["图号conf"] = near[0] + suf, c
                     elif not near and re.fullmatch(r"F\d{2}[1-9ABC8]\d{4}", base):
-                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 某图号 而文件名只写到前一张):
+                        # OCR 读到完整图号, 但不在"文件名起~止"范围内(如 质保号X 而文件名只写到 3401):
                         # 保留原值但降置信 → 复核清单提示人工确认, 而不是整页静默丢掉
                         f["图号"], f["图号conf"] = base + suf, min(c, 0.92)
                 else:
@@ -116,14 +118,14 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
             if m:
                 cand_lu = norm_lu(m.group(0))
                 # 图纸上的炉号即使没有对应热处理卡也采信, 三种依据(卡片不全 ≠ 图纸错,
-                # 某批 炉号 炉号B/炉号C 曾被卡片过滤误杀):
-                #   ① 同块: "炉号 炉号B" 标签直接引导
+                # 某批 炉号 255926/255927 曾被卡片过滤误杀):
+                #   ① 同块: "炉号 255926" 标签直接引导
                 #   ② 上一块就是"炉号"标签(标签和数字常被 OCR 拆成两块)
                 #   ③ 本块就是纯炉号数字本身(标题栏里孤立的 6 位数字)
                 labeled = (re.search(r"炉号\s*[：:·]?\s*$", t[:m.start()])
                            or re.fullmatch(r"炉号\s*[：:·]?", prev_t)) is not None
                 standalone = t == m.group(0).strip()
-                # 带子号后缀的炉号: 卡片若是 炉号X-1 而图纸写 炉号X, 也认(后面按批次找卡时标待核)
+                # 带子号后缀的炉号: 卡片若是 248446-1 而图纸写 248446, 也认(后面按批次找卡时标待核)
                 if (not valid_lu or cand_lu in valid_lu or labeled
                         or (standalone and cand_lu.isdigit() and len(cand_lu) == 6)
                         or (cand_lu.isdigit() and any(v.startswith(cand_lu + "-") for v in valid_lu))):
@@ -137,7 +139,8 @@ def parse_fields(blocks, legal_draws=None, valid_lu=None):
             if mm2 and c >= 0.6 and "HCH" not in t and len(t) < 18:
                 f.update(外径=mm2.group(1), 长度=mm2.group(2), 规格conf=c, 规格原文=t)
         ms = [m.group(1) for m in MAT.finditer(t)
-              if not _NOT_MAT.fullmatch(m.group(1))]
+              if not _NOT_MAT.fullmatch(m.group(1))
+              and not _UNIT_TAIL.search(m.group(1))]
         if ms:
             # 字母牌号(42Cr2Mo1/06Cr18Ni11Ti...)优先; 纯数字牌号(304/316L)可能是编码子串误读, 仅兜底
             has_letter = [re.search(r'[A-Za-z]', x) is not None for x in ms]
