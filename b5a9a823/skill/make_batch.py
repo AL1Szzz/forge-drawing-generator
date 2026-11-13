@@ -256,10 +256,10 @@ def build(batch_dir, dry=False):
             a0 = TIERS[0][1]                     # ≤1T 档双边补加
             if spec["shape"] == "solid":
                 d_up = max(spec["D"], MIN_SOLID_D) + a0
-                w_up = 3.编码X / 4.0 * d_up * d_up * (spec["L"] + a0) * 7.85e-6
+                w_up = 3.14159265358979 / 4.0 * d_up * d_up * (spec["L"] + a0) * 7.85e-6
             else:
                 fo_up, fi_up = spec["od"] + a0 / 2.0, max(spec["id"] - a0 / 2.0, 0.0)
-                w_up = 3.编码X / 4.0 * (fo_up * fo_up - fi_up * fi_up) * (spec["L"] + a0) * 7.85e-6
+                w_up = 3.14159265358979 / 4.0 * (fo_up * fo_up - fi_up * fi_up) * (spec["L"] + a0) * 7.85e-6
             if w_up <= 1000:
                 allow, tier = a0, "≤1T"
                 derived_note = "锻重未识别,按锻件尺寸推算上限%.0fkg≤1T,档位待确认" % w_up
