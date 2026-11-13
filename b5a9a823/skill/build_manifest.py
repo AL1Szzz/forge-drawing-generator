@@ -202,6 +202,29 @@ def build(batch_dir, out_csv=None, pages_limit=None, dpi=400):
             print("  p%03d 图号=%-10s 炉号=%-8s 规格=Ø%s×%s 重量=%-6s 材质=%s" % (
                 i + 1, f["图号"] or '?', f["炉号"] or '?', f["外径"] or '?', f["长度"] or '?',
                 f["锻重kg"] or '?', f["材质"] or '?'), flush=True)
+    # 图号补漏(2026-11-13 某批): 标题栏图号被 OCR 读坏(如 F26/4187, 数字 1 读成斜杠),
+    # 而 PDF 文件名已给出连续图号范围时, 按"一页一号、只剩一个号、只剩一页空"补上。
+    # 条件严格: 页数==图号数, 已认领号数==图号数-1, 空页恰 1, 剩余号恰 1 —— 绝不猜测分配。
+    by_pdf = {}
+    for r in rows:
+        by_pdf.setdefault(r["pdf"], []).append(r)
+    for bn, prs in by_pdf.items():
+        m = rx("re_range").search(bn)
+        if not m:
+            continue
+        a, b = int(m.group(2)), int(m.group(3))
+        expect = {"%s%04d" % (m.group(1), i) for i in range(a, b + 1)}
+        if len(expect) != len(prs):
+            continue
+        used = {r["图号"].split("-")[0] for r in prs if r["图号"]}
+        rest = expect - used
+        blanks = [r for r in prs if not r["图号"]]
+        if len(rest) == 1 and len(blanks) == 1 and len(used) == len(expect) - 1:
+            blanks[0]["图号"] = rest.pop()
+            blanks[0]["图号置信"] = "文件名范围补漏"
+            print("  p%s 图号补漏 -> %s (标题栏OCR失效, 按文件名范围唯一余号)" %
+                  (blanks[0]["page"], blanks[0]["图号"]), flush=True)
+
     out = out_csv or os.path.join(batch_dir, "manifest.csv")
     keys = ["pdf","page","图号","图号_ocr","图号置信","炉号","外径","内径","长度","规格conf","规格原文",
             "材质","锻重kg","名称","图纸锻件尺寸","锻件尺寸来源","原始OCR"]

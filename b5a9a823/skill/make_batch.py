@@ -25,7 +25,7 @@ sys.path.insert(0, HERE)
 from config import rx, norm_lu
 
 TIERS = [(1000, 10), (3000, 15), (float("inf"), 20)]   # (上限kg, 双边补加mm)
-MIN_SOLID_D = 50                                     # 圆棒加余量后直径下限(用户 2026-11-02)
+MIN_SOLID_D = 50                                     # 圆棒原始直径下限(用户 2026-11-13 改口径)
 BLOCK_ADD = 10                                       # 方块件: 热处理尺寸长宽高每向+10(用户 2026-11-02)
 FRAME = {"x0": 61, "y0": 74, "x1": 563.5, "y1": 807.5}
 ROWS = [703.5, 743, 782, 807.5]
@@ -237,7 +237,7 @@ def build(batch_dir, dry=False):
                 pass
     for r in jobs:
         dh, lu = r["图号"], r["炉号"]
-        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批某质保号 只有成品小尺寸),
+        # 规格优先取标题栏拆列; 标题栏没有规格行时(如 某批 质保号X 只有成品小尺寸),
         # 用图纸重量行直给串兜底解析
         spec = parse_spec(r) or parse_spec(r, raw=(r.get("图纸锻件尺寸") or "").strip())
         _m = (r.get("锻重kg") or "").strip()
@@ -255,11 +255,11 @@ def build(batch_dir, dry=False):
         if allow is None and spec:
             a0 = TIERS[0][1]                     # ≤1T 档双边补加
             if spec["shape"] == "solid":
-                d_up = max(spec["D"] + a0, MIN_SOLID_D)
-                w_up = 3.14159265358979 / 4.0 * d_up * d_up * (spec["L"] + a0) * 7.85e-6
+                d_up = max(spec["D"], MIN_SOLID_D) + a0
+                w_up = 3.编码X / 4.0 * d_up * d_up * (spec["L"] + a0) * 7.85e-6
             else:
                 fo_up, fi_up = spec["od"] + a0 / 2.0, max(spec["id"] - a0 / 2.0, 0.0)
-                w_up = 3.14159265358979 / 4.0 * (fo_up * fo_up - fi_up * fi_up) * (spec["L"] + a0) * 7.85e-6
+                w_up = 3.编码X / 4.0 * (fo_up * fo_up - fi_up * fi_up) * (spec["L"] + a0) * 7.85e-6
             if w_up <= 1000:
                 allow, tier = a0, "≤1T"
                 derived_note = "锻重未识别,按锻件尺寸推算上限%.0fkg≤1T,档位待确认" % w_up
@@ -334,7 +334,10 @@ def build(batch_dir, dry=False):
                 cfg = make_cfg(r, dh, lu, ws, allow, out_dir, False, spec_override=wd)
                 row.update(稿件类型="正式稿(图纸直给)", 补加mm="0(照用)",
                            问题="锻件尺寸为图纸重量行直给, 原样照用, 不需要热处理尺寸")
-                groups.setdefault(("直给", _base_dh(dh), lu, cfg["info_row"]["append_spec"]),
+                # 分组口径(用户 2026-11-05): 同尺寸+同批次(炉号) → 合一张图, 质保号都写上、
+                # 数量求和; 尺寸或批次不同 → 分开。键里不能带图号, 否则同炉同尺寸的
+                # 两个质保号(如 质保号X/质保号X 同一份图纸两页)会被拆成两张图。
+                groups.setdefault(("直给", lu, cfg["info_row"]["append_spec"]),
                                   {"items": []})["items"].append(
                     {"r": r, "lu": lu, "cfg": cfg, "row": row, "prov": False})
                 continue
@@ -461,6 +464,39 @@ def build(batch_dir, dry=False):
         report.append(row)
 
         # 加样件: 卡片有取样件尺寸且尺寸与本体不同 → 另出一张 "质保号+样"
+        # 加样件路径⓪(用户 2026-11-13 某批): 图纸/料单直接印了
+        # "/样Ø70×1030×3‰=32.1kg" → 这就是加样后的最终锻件尺寸, 原样直给,
+        # 不加余量、不套 φ50 下限、不再用取样行+10 推算。优先级高于下面三条。
+        _direct_samp = False
+        for it in items:
+            if it["lu"] in samp_lu_done:
+                continue
+            raw = it["r"].get("原始OCR") or ""
+            m = RE_SAMPLE_DIM.search(raw)
+            if not m:
+                continue
+            D_s, L_s = int(m.group(1)), int(m.group(2))
+            mw = RE_SAMPLE_KG.search(raw[m.end():m.end() + 45])
+            sw = mw.group(1) if mw else ""
+            srow = dict(it["row"])
+            srow["图号"] = dh0 + "样"
+            srow["炉号"] = it["lu"]
+            scfg = make_cfg(it["r"], srow["图号"], it["lu"],
+                            {"shape": "solid", "D": D_s, "L": L_s}, 0, out_dir, False,
+                            spec_override="Ø%d×%d" % (D_s, L_s))
+            scfg["weight"] = (sw + "kg") if sw else ""
+            srow.update(规格=scfg["info_row"]["append_spec"], 余量档="", 补加mm="0(照用)",
+                        锻重kg=sw, 稿件类型="正式稿(图纸直给)", 置信=it["row"]["置信"],
+                        问题="加样件, 尺寸取自图纸/料单『/样』直给, 原样照用不加余量")
+            emit(scfg, srow["图号"], it["lu"], srow, False, it["r"])
+            srow["规格"] = scfg["info_row"]["append_spec"]
+            report.append(srow)
+            samp_lu_done.add(it["lu"])
+            _direct_samp = True
+            break                                # 同一炉号只出一张样图
+        if _direct_samp:
+            continue
+
         _blk_done = False
         for it in items:
             bk = it.get("bk")
@@ -534,7 +570,7 @@ def build(batch_dir, dry=False):
             break                                # 同一质保号只出一张样图
 
         # 加样件兜底③: 大纲取样行有尺寸就出样图(图纸"/样xxKG"标记可能被 OCR 漏读,
-        # 某批 质保号C 样因此丢过一张, 2026-11-13); 每炉号只出一张
+        # 某批 质保号X 样因此丢过一张, 2026-11-13); 每炉号只出一张
         for it in items:
             if it["lu"] in samp_lu_done:
                 continue
@@ -660,11 +696,16 @@ def make_cfg(r, dh, lu, base, allow, out_dir, provisional=False, spec_override=N
                 "ht_do": base["od"], "ht_di": base["id"], "wall_exaggerate": 3.2}
         spec_txt = "\u00d8%d\u00d7\u00d8%d\u00d7%s" % (fo, fi, L)
     else:
-        D = base["D"] + int(round(a2))
+        # φ50 口径(用户 2026-11-13 改): 原始直径不满 φ50 就"直接视为 φ50"再加余量;
+        # 旧口径是"加完余量后不足 50 才抬到 50", 已交付批次不回溯。
+        # 图纸直给(spec_override)不走这里, 写了尺寸就原样照抄, 不受 φ50 影响。
+        D0 = base["D"]
+        if D0 < MIN_SOLID_D:
+            bump_note = ("圆棒Ø%d<φ%d, 按φ%d计再加余量%d"
+                         % (D0, MIN_SOLID_D, MIN_SOLID_D, int(round(a2))))
+            D0 = MIN_SOLID_D
+        D = D0 + int(round(a2))
         L = base["L"] + (allow or 0)
-        if D < MIN_SOLID_D:                  # 圆棒加余量后直径下限(用户 2026-11-02)
-            bump_note = "圆棒Ø%d+余量<%d, 直径抬升至%d" % (D, MIN_SOLID_D, MIN_SOLID_D)
-            D = MIN_SOLID_D
         part = {"shape": "solid", "D": D, "L": L, "width_exaggerate": 6.0}
         spec_txt = "\u00d8%d\u00d7%s" % (D, L)
     cfg = _pack(r, dh, lu, part, spec_txt, out_dir, "待核" if provisional else "算出")
@@ -680,6 +721,12 @@ NAME_STOP = ("名称", "材质", "数量", "填图", "复核", "批准", "版本
 
 
 RE_SAMPLE_W = re.compile(r"(\d+(?:\.\d+)?)\s*kg.{0,14}?样\s*(\d+(?:\.\d+)?)\s*kg", re.I | re.S)
+# 图纸/料单重量行把"加样后的尺寸"也直接印出来: "/样Ø70×1030×3‰=32.1kg"
+# (用户 2026-11-13: 图纸上写了尺寸的必须原样直给, 无论是不是加样件)
+RE_SAMPLE_DIM = re.compile(
+    r"[/／]\s*样\s*[ØΦφøα中oO]?\s*(\d{2,4})\s*[×xX*]\s*(\d{2,5})(?:\s*[×xX*]\s*\d{2,4})?",
+    re.I)
+RE_SAMPLE_KG = re.compile(r"(\d+(?:\.\d+)?)\s*[kK][gG]")
 # 长方体: 三个尺寸 110×326×450 (无 Ø), 区别于圆棒 ØD×L
 RE_BLOCK = re.compile(r"(?<![\d.])(\d{2,4})\s*[×xX*]\s*(\d{2,4})\s*[×xX*]\s*(\d{2,4})(?![\d.])")
 
